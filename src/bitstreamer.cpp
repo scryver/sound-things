@@ -13,7 +13,7 @@ struct BitStreamer
     u8 *end;
 };
 
-static u64
+internal u64
 get_bits_be(BitStreamer *stream, u32 nrBits)
 {
     // NOTE(michiel): This gets the big endian integer specified by nrBits
@@ -74,7 +74,7 @@ get_bits_be(BitStreamer *stream, u32 nrBits)
     return result;
 }
 
-static u64
+internal u64
 get_bits_le(BitStreamer *stream, u32 nrBits)
 {
     i_expect(nrBits <= 64);
@@ -132,7 +132,7 @@ get_bits_le(BitStreamer *stream, u32 nrBits)
     return 0;
 }
 
-static inline u64
+internal u64
 get_bits(BitStreamer *bitStream, u32 nrBits)
 {
     u64 result = 0;
@@ -150,7 +150,7 @@ get_bits(BitStreamer *bitStream, u32 nrBits)
     return result;
 }
 
-static inline u32
+internal u32
 get_le_u32(BitStreamer *bitStream)
 {
     i_expect(bitStream->remainingBits == 0);
@@ -159,7 +159,7 @@ get_le_u32(BitStreamer *bitStream)
     return result;
 }
 
-static void
+internal void
 void_bits(BitStreamer *bitStream, u32 nrBits)
 {
     u32 sixtyFours = nrBits / 64;
@@ -171,13 +171,13 @@ void_bits(BitStreamer *bitStream, u32 nrBits)
     (void)get_bits(bitStream, remaining);
 }
 
-static inline void
+internal inline void
 void_bytes(BitStreamer *bitStream, u32 nrBytes)
 {
     void_bits(bitStream, nrBytes * 8);
 }
 
-static Buffer
+internal Buffer
 copy_to_bytes(BitStreamer *bitStream, u32 nrBytes)
 {
     Buffer result = {};
@@ -190,7 +190,7 @@ copy_to_bytes(BitStreamer *bitStream, u32 nrBytes)
     return result;
 }
 
-static String
+internal String
 copy_to_string(BitStreamer *bitStream, u32 nrBytes)
 {
     String result = copy_to_bytes(bitStream, nrBytes);

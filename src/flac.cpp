@@ -36,21 +36,22 @@ parse_frame_header(BitStreamer *bitStream, FlacInfo *info)
     
     FlacFrameHeader result = {};
     u8 *crcCheck = bitStream->at;
-    result.syncCode = get_bits(bitStream, 14);
+    u32 dataBlock = get_bits(bitStream, 32);
+    result.syncCode = dataBlock >> 18;
     if (result.syncCode != 0x3FFE)
     {
         fprintf(stderr, "Synccode mismatch: 0x%04X vs 0x3FFE\n", result.syncCode);
     }
     i_expect(result.syncCode == 0x3FFE);
-    i_expect(get_bits(bitStream, 1) == 0);
-    result.variableBlocks = get_bits(bitStream, 1);
+    i_expect((dataBlock & 0x00020000) == 0);
+    result.variableBlocks = (dataBlock & 0x00010000) ? 1 : 0;
     
-    u32 blockSize = get_bits(bitStream, 4);
+    u32 blockSize = (dataBlock >> 12) & 0x0F;
     i_expect(blockSize);
     
-    u32 sampleRate = get_bits(bitStream, 4);
+    u32 sampleRate = (dataBlock >> 8) & 0x0F;
     
-    result.channelAssignment = get_bits(bitStream, 4);
+    result.channelAssignment = (dataBlock >> 4) & 0x0F;
     i_expect(result.channelAssignment <= FlacChannel_MidSide);
     if (result.channelAssignment < FlacChannel_LeftSide)
     {
@@ -61,7 +62,7 @@ parse_frame_header(BitStreamer *bitStream, FlacInfo *info)
         result.channelCount = 2;
     }
     
-    u32 sampleSize = get_bits(bitStream, 3);
+    u32 sampleSize = (dataBlock >> 1) & 0x07;
     switch (sampleSize)
     {
         case 0:  { result.bitsPerSample = info->bitsPerSample; } break;
@@ -75,7 +76,7 @@ parse_frame_header(BitStreamer *bitStream, FlacInfo *info)
         default: { i_expect(0); } break;
     }
     
-    i_expect(get_bits(bitStream, 1) == 0);
+    i_expect((dataBlock & 0x01) == 0);
     i_expect(bitStream->remainingBits == 0);
     
     u32 numberByteCount = 0;
@@ -132,7 +133,8 @@ parse_frame_header(BitStreamer *bitStream, FlacInfo *info)
         }
     }
     
-    fprintf(stdout, "Number: %lu\n", number);
+    result.frameNumber = number;
+    //i_expect(result.frames.frameCount == result.blocks.sampleCount);
     
     if (blockSize == 0x1)
     {
@@ -259,38 +261,43 @@ parse_subframe_header(BitStreamer *bitStream, FlacFrameHeader *frameHeader, u32 
 }
 
 internal void
-parse_residual_coding(BitStreamer *bitStream, u32 order, u32 blockSize)
+parse_residual_coding(BitStreamer *bitStream, u32 order, u32 blockSize,
+                      Buffer *residual)
 {
-    char *indent = "    ";
-    
     u8 residualEncoding = get_bits(bitStream, 2);
     i_expect(residualEncoding < 2);
     u32 partitionOrder = get_bits(bitStream, 4);
     u32 partitionCount = 1 << partitionOrder;
     
+#if FLAC_DEBUG_LEVEL > 1
+    char *indent = "    ";
     fprintf(stdout, "Rice:\n");
     fprintf(stdout, "%sencoding : %d\n", indent, residualEncoding);
     fprintf(stdout, "%sorder    : %d\n", indent, partitionOrder);
+#endif
     
     u32 nrBitsPerRice = residualEncoding == 0 ? 4 : 5;
     u32 riceEscape = residualEncoding == 0 ? 0xF : 0x1F;
     
     u32 nrSamples = ((partitionOrder > 0) ? (blockSize >> partitionOrder) : (blockSize - order));
     
+    s32 *dest = (s32 *)residual->data;
     for (u32 partitionIndex = 0; partitionIndex < partitionCount; ++partitionIndex)
     {
         u32 riceParameter = get_bits(bitStream, nrBitsPerRice);
         
         u32 partitionSamples = ((partitionOrder == 0) || (partitionIndex > 0)) ? nrSamples : nrSamples - order;
+#if FLAC_DEBUG_LEVEL > 1
         fprintf(stdout, "%ssamples  : %d\n", indent, partitionSamples);
         fprintf(stdout, "%sparameter: %d\n", indent, riceParameter);
+#endif
         
         if (riceParameter == riceEscape)
         {
             u32 bitsPerSample = get_bits(bitStream, 5);
             for (u32 i = 0; i < partitionSamples; ++i)
             {
-                (void)get_bits(bitStream, bitsPerSample);
+                *dest++ = (s32)(get_bits(bitStream, bitsPerSample) >> (32 - bitsPerSample)) << (32 - bitsPerSample);
             }
         }
         else
@@ -305,8 +312,12 @@ parse_residual_coding(BitStreamer *bitStream, u32 order, u32 blockSize)
                 }
                 u32 x = q << riceParameter;
                 x |= get_bits(bitStream, riceParameter);
+                s32 value = (s32)(x >> 1) ^ -(s32)(x & 1);
+                *dest++ = value;
                 
-                //fprintf(stdout, "Decoded rice: %u (q %u r %u)\n", x, q, riceParameter);
+#if FLAC_DEBUG_LEVEL > 2
+                fprintf(stdout, "%s%srice %u: %d (q %u r %u)\n", indent, indent, i, value, q, riceParameter);
+#endif
             }
         }
     }

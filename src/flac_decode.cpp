@@ -6,6 +6,10 @@
 
 #include "../libberdip/platform.h"
 
+#ifndef FLAC_DEBUG_LEVEL
+#define FLAC_DEBUG_LEVEL  0
+#endif
+
 #include "flac.h"
 
 #include "../libberdip/std_file.c"
@@ -13,6 +17,140 @@
 
 #include "bitstreamer.cpp"
 #include "flac.cpp"
+
+internal s32
+get_signed32(BitStreamer *bitStream, u32 bitCount)
+{
+    i_expect(bitCount);
+    i_expect(bitCount <= 32);
+    s32 result = ((s32)get_bits(bitStream, bitCount) << (32 - bitCount));
+    result >>= (32 - bitCount);
+    return result;
+}
+
+internal void
+process_constant(BitStreamer *bitStream, u32 bitsPerSample,
+                 u32 blockCount, s32 *samples)
+{
+    // NOTE(michiel): expects samples[blockCount]
+    s32 constant = get_signed32(bitStream, bitsPerSample);
+    s32 *dst = samples;
+    for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
+    {
+        *dst++ = constant;
+    }
+}
+
+internal void
+process_verbatim(BitStreamer *bitStream, u32 bitsPerSample,
+                 u32 blockCount, s32 *samples)
+{
+    // NOTE(michiel): expects samples[blockCount]
+    s32 *dst = samples;
+    for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
+    {
+        s32 source = get_signed32(bitStream, bitsPerSample);
+        *dst++ = source;
+    }
+}
+
+internal void
+process_fixed(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
+              u32 blockCount, s32 *samples)
+{
+    // NOTE(michiel): expects samples[blockCount]
+    for (u32 warmupIdx = 0; warmupIdx < order; ++warmupIdx)
+    {
+        samples[warmupIdx] = get_signed32(bitStream, bitsPerSample);
+    }
+    
+    Buffer residual;
+    residual.size = (blockCount - order) * sizeof(s32);
+    residual.data = allocate_array(u8, residual.size);
+    parse_residual_coding(bitStream, order, blockCount, &residual);
+    
+    s32 *res = (s32 *)residual.data;
+    
+    switch (order)
+    {
+        case 0:
+        {
+            for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+            {
+                samples[blockIdx] = *res++;
+            }
+        } break;
+        
+        case 1:
+        {
+            for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+            {
+                samples[blockIdx] = *res++ + samples[blockIdx - 1];
+            }
+        } break;
+        
+        case 2:
+        {
+            for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+            {
+                samples[blockIdx] = *res++ + 2*samples[blockIdx - 1] - samples[blockIdx - 2];
+            }
+        } break;
+        
+        case 3:
+        {
+            for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+            {
+                samples[blockIdx] = *res++ + 3*samples[blockIdx - 1] - 3*samples[blockIdx - 2] + samples[blockIdx - 3];
+            }
+        } break;
+        
+        case 4:
+        {
+            for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+            {
+                samples[blockIdx] = *res++ + 4*samples[blockIdx - 1] - 6*samples[blockIdx - 2] + 4*samples[blockIdx - 3] - samples[blockIdx - 4];
+            }
+        } break;
+        
+        INVALID_DEFAULT_CASE;
+    }
+}
+
+internal void
+process_lpc(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
+            u32 blockCount, s32 *samples)
+{
+    // NOTE(michiel): expects samples[blockCount]
+    for (u32 warmupIdx = 0; warmupIdx < order; ++warmupIdx)
+    {
+        samples[warmupIdx] = get_signed32(bitStream, bitsPerSample);
+    }
+    u32 precision = get_bits(bitStream, 4) + 1;
+    s32 quantize  = get_signed32(bitStream, 5);
+    
+    s32 coefficients[32];
+    for (u32 coefIdx = 0; coefIdx < order; ++coefIdx)
+    {
+        coefficients[coefIdx] = get_signed32(bitStream, precision);
+    }
+    
+    Buffer residual;
+    residual.size = (blockCount - order) * sizeof(s32);
+    residual.data = allocate_array(u8, residual.size);
+    parse_residual_coding(bitStream, order, blockCount, &residual);
+    
+    s32 *res = (s32 *)residual.data;
+    for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
+    {
+        s32 value = 0;
+        for (u32 coef = 0; coef < order; ++coef)
+        {
+            value += coefficients[coef] * samples[blockIdx - coef - 1];
+        }
+        samples[blockIdx] = *res++ + (value >> quantize);
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -24,10 +162,13 @@ int main(int argc, char **argv)
     bitStream->at = flacData.data;
     bitStream->end = flacData.data + flacData.size;
     
-    i_expect(is_flac_file(bitStream));
+    b32 isFlacFile = is_flac_file(bitStream);
+    i_expect(isFlacFile);
     bitStream->at += 4;
     
+#if FLAC_DEBUG_LEVEL
     char *indent = "    ";
+#endif
     
     u32 maxMetadataEntries = 64;
     u32 metadataEntryCount = 0;
@@ -135,6 +276,7 @@ int main(int argc, char **argv)
         }
     }
     
+#if FLAC_DEBUG_LEVEL
     for(u32 index = 0; index < metadataEntryCount; ++index)
     {
         FlacMetadata *metadata = metadataEntries + index;
@@ -202,9 +344,10 @@ int main(int argc, char **argv)
                 fprintf(stdout, "%sbits/pixel : %d\n", indent, metadata->picture.bitsPerPixel);
                 fprintf(stdout, "%sindexed    : %d\n", indent, metadata->picture.indexedColours);
                 
-#if 0
+#if FLAC_DEBUG_LEVEL > 10
                 b32 isJpg = true;
                 char *mimeJpg = "image/jpeg";
+                Buffer mime = metadata->picture.mime;
                 for (u32 i = 0; i < mime.size; ++i)
                 {
                     if ((mimeJpg[i] == 0) ||
@@ -220,6 +363,7 @@ int main(int argc, char **argv)
                     FILE *file = fopen("picture.jpg", "wb");
                     if (file)
                     {
+                        Buffer picture = metadata->picture.image;
                         fwrite(picture.data, picture.size, 1, file);
                         fclose(file);
                     }
@@ -238,15 +382,24 @@ int main(int argc, char **argv)
             } break;
         }
     }
+#endif
     
     i_expect(metadataEntries[0].kind == FlacMetadata_StreamInfo);
     FlacInfo *info = &metadataEntries[0].info;
+    //FlacFrame *frame = allocate_struct(FlacFrame);
+    //init_flac_frame(info);
+    
+    umm totalSampleCount = info->totalSamples * info->channelCount;
+    s32 *testSamples     = allocate_array(s32, totalSampleCount);
+    umm testSampleIndex  = 0;
     
     while (bitStream->at != bitStream->end)
     {
         u8 *crcStart = bitStream->at;
         FlacFrameHeader frameHeader = parse_frame_header(bitStream, info);
+        //set_flac_frame(frame, info, &frameHeader);
         
+#if FLAC_DEBUG_LEVEL
         char *channelType = "";
         switch (frameHeader.channelAssignment)
         {
@@ -259,12 +412,12 @@ int main(int argc, char **argv)
             case FlacChannel_FrontLRCSubBackCLR: { channelType = "FL/FR/FC/LFE/BC/BL/BR"; } break;
             case FlacChannel_FrontLRCSubBackLRSideLR: { channelType = "FL/FR/FC/LFE/BL/BR/SL/SR"; } break;
             case FlacChannel_LeftSide:  { channelType = "L/S"; } break;
-            case FlacChannel_RightSide: { channelType = "R/S"; } break;
+            case FlacChannel_SideRight: { channelType = "S/R"; } break;
             case FlacChannel_MidSide:   { channelType = "M/S"; } break;
             default: break;
         }
         
-        fprintf(stdout, "First header:\n");
+        fprintf(stdout, "Frame header %lu:\n", frameHeader.frameNumber);
         fprintf(stdout, "%sblocking          : %s-blocksize stream\n", indent,
                 (frameHeader.variableBlocks) ? "variable" : "fixed");
         fprintf(stdout, "%sblock size        : %d samples\n", indent, frameHeader.blockSize);
@@ -272,11 +425,13 @@ int main(int argc, char **argv)
         fprintf(stdout, "%schannel count     : %u\n", indent, frameHeader.channelCount);
         fprintf(stdout, "%schannel assignment: %s\n", indent, channelType);
         fprintf(stdout, "%ssample size       : %d bits\n", indent, frameHeader.bitsPerSample);
+#endif
         
         for (u32 subChannelIndex = 0; subChannelIndex < frameHeader.channelCount; ++subChannelIndex)
         {
             FlacSubframeHeader subframeHeader = parse_subframe_header(bitStream, &frameHeader, subChannelIndex);
             
+#if FLAC_DEBUG_LEVEL > 1
             char *subframeType = "";
             switch (subframeHeader.type)
             {
@@ -289,51 +444,68 @@ int main(int argc, char **argv)
             }
             fprintf(stdout, "Subframe type: %s (%u)\n", subframeType, subframeHeader.typeOrder);
             fprintf(stdout, "Wasted bits: %s (%u)\n", (subframeHeader.wastedBits) ? "true" : "false", subframeHeader.wastedBits);
+#endif
             
-            s32 warmupSamples[32];
             u32 bps = frameHeader.bitsPerSample;
             if ((((frameHeader.channelAssignment == FlacChannel_LeftSide) ||
                   (frameHeader.channelAssignment == FlacChannel_MidSide)) &&
                  (subChannelIndex == 1)) ||
-                ((frameHeader.channelAssignment == FlacChannel_RightSide) &&
+                ((frameHeader.channelAssignment == FlacChannel_SideRight) &&
                  (subChannelIndex == 0)))
             {
+                // NOTE(michiel): Not in spec, but the side channel (L - R) is 1 bit larger to account for overflows.
                 ++bps;
             }
             
             if (subframeHeader.type == FlacSubframe_Constant)
             {
-                (void)get_bits(bitStream, frameHeader.bitsPerSample);
+                process_constant(bitStream, bps, frameHeader.blockSize, testSamples + testSampleIndex);
             }
             else if (subframeHeader.type == FlacSubframe_Verbatim)
             {
-                //umm totalBits = frameHeader.bitsPerSample * frameHeader.blockSize;
+                process_verbatim(bitStream, bps, frameHeader.blockSize, testSamples + testSampleIndex);
+#if 0                
+                //umm totalBits = bps * frameHeader.blockSize;
                 for (u32 x = 0; x < frameHeader.blockSize; ++x)
-                {
-                    (void)get_bits(bitStream, frameHeader.bitsPerSample);
-                }
-            }
-            else if (subframeHeader.type == FlacSubframe_Fixed)
-            {
-                u32 fixedOrder = subframeHeader.typeOrder;
-                //umm totalBits = frameHeader.bitsPerSample * fixedOrder;
-                for (u32 x = 0; x < fixedOrder; ++x)
                 {
                     (void)get_bits(bitStream, bps);
                 }
+#endif
+            }
+            else if (subframeHeader.type == FlacSubframe_Fixed)
+            {
+                process_fixed(bitStream, subframeHeader.typeOrder, bps,
+                              frameHeader.blockSize, testSamples + testSampleIndex);
+#if 0                
+                u32 fixedOrder = subframeHeader.typeOrder;
+                //umm totalBits = bps * fixedOrder;
+                for (u32 x = 0; x < fixedOrder; ++x)
+                {
+                    s32 warmup = (s32)(get_bits(bitStream, bps) << (32 - bps)) >> (32 - bps);
+#if FLAC_DEBUG_LEVEL > 1
+                    fprintf(stdout, "%swarmup(%d): %d\n", indent, x, warmup);
+#else
+                    unused(warmup);
+#endif
+                }
                 parse_residual_coding(bitStream, fixedOrder, frameHeader.blockSize);
+#endif
             }
             else if (subframeHeader.type == FlacSubframe_LPC)
             {
+                process_lpc(bitStream, subframeHeader.typeOrder, bps,
+                            frameHeader.blockSize, testSamples + testSampleIndex);
+#if 0                
                 // NOTE(michiel): LPC
                 u32 lpcOrder = subframeHeader.typeOrder;
+                s32 warmupSamples[32];
                 for (u32 warmupIndex = 0; warmupIndex < lpcOrder; ++warmupIndex)
                 {
                     warmupSamples[warmupIndex] = (s32)(get_bits(bitStream, bps) << (32 - bps)) >> (32 - bps);
                 }
                 u32 linearPredictorCoeffPrecision = get_bits(bitStream, 4) + 1;
                 i_expect(linearPredictorCoeffPrecision < 16);
-                s32 linearPredictorShift = ((s32)(s8)(get_bits(bitStream, 5) << 3)) >> 3;
+                s32 lpcQuantization = ((s32)(s8)(get_bits(bitStream, 5) << 3)) >> 3;
                 s32 predictorCoeffs[512];
                 
                 u32 lpcp = linearPredictorCoeffPrecision;
@@ -342,31 +514,36 @@ int main(int argc, char **argv)
                     predictorCoeffs[coeffIndex] = (s32)(get_bits(bitStream, lpcp) << (32 - lpcp)) >> (32 - lpcp);
                 }
                 
-                fprintf(stdout, "SubFrame LPC:\n");
+#if FLAC_DEBUG_LEVEL > 1
                 fprintf(stdout, "%slpc order : %d\n", indent, lpcOrder);
                 for (u32 warmupIndex = 0; warmupIndex < lpcOrder; ++warmupIndex)
                 {
                     fprintf(stdout, "%swarmup(%d): %d\n", indent, warmupIndex, warmupSamples[warmupIndex]);
                 }
                 fprintf(stdout, "%sprecision : %d\n", indent, linearPredictorCoeffPrecision);
-                fprintf(stdout, "%sshift     : %d\n", indent, linearPredictorShift);
+                fprintf(stdout, "%sshift     : %d\n", indent, lpcQuantization);
                 for (u32 coeffIndex = 0; coeffIndex < lpcOrder; ++coeffIndex)
                 {
                     fprintf(stdout, "%scoeff(%d) : %d\n", indent, coeffIndex, predictorCoeffs[coeffIndex]);
                 }
+#endif
                 
                 parse_residual_coding(bitStream, lpcOrder, frameHeader.blockSize);
+#endif
+                
             }
             else
             {
                 fprintf(stderr, "Invalid subframe!\n");
             }
+            //testSampleIndex += frameHeader.blockSize;
         }
+        
+        //interleave_samples();
         
         bitStream->remainingBits = 0;
         bitStream->remainingData = 0;
         
-        //void_bytes(bitStream, (frameHeader.blockSize * frameHeader.bitsPerSample) / 8);
         u16 crcTable[256];
         crc16_init_table(0x8005, crcTable);
         u16 crcCheck = crc16_calc_crc(crcTable, bitStream->at - crcStart, crcStart);

@@ -137,9 +137,10 @@ enum FlacChannelAssignment
     FlacChannel_FrontLRCSubBackLR,
     FlacChannel_FrontLRCSubBackCLR,
     FlacChannel_FrontLRCSubBackLRSideLR,
-    FlacChannel_LeftSide,  // NOTE(michiel): Channel 0 = left,    Channel 1 = left - right
-    FlacChannel_RightSide, // NOTE(michiel): Channel 0 = right,   Channel 1 = left - right
-    FlacChannel_MidSide,   // NOTE(michiel): Channel 0 = average, Channel 1 = left - right
+    FlacChannel_LeftSide,  // NOTE(michiel): Channel 0 = left,         Channel 1 = left - right  => right = c0 - c1
+    FlacChannel_SideRight, // NOTE(michiel): Channel 0 = left - right, Channel 1 = right         => left  = c1 - c0
+    FlacChannel_MidSide,   // NOTE(michiel): Channel 0 = average,      Channel 1 = left - right  => left  = c0 + (c1 / 2),
+    //                                                                                              right = c0 - (c1 / 2)
 };
 
 struct FlacFrameHeader
@@ -179,3 +180,109 @@ struct FlacSubframeHeader
     u8 typeOrder;
     u32 wastedBits;
 };
+
+//
+//
+//
+
+struct FlacSubframeVerbatim
+{
+    u32 sampleCount;   // NOTE(michiel): blockSize
+    s32 *samples;
+};
+
+struct FlacSubframeFixed
+{
+    u32 order;
+    s32 *warmup;       // NOTE(michiel): [blockSize]
+    
+    u32 residualCount;
+    s32 *residual;
+};
+
+struct FlacSubframeLPC
+{
+    u32 order;
+    s32 *warmup;
+    
+    u32 residualCount;
+    s32 *residual;
+    
+    u32 precision;
+    s32 shift;
+    
+    s32 *coefs;
+};
+
+struct FlacSubframe
+{
+    enum32(FlacSubframeType) type;
+    
+    u32 wastedBits;
+    
+    union {
+        s32 constant;
+        struct {
+            u32 sampleCount;   // NOTE(michiel): <= blockSize
+            s32 *samples;      // NOTE(michiel): [sampleCount]
+        };
+        struct {
+            u32 order;         // NOTE(michiel): <= blockSize
+            s32 *warmup;       // NOTE(michiel): [order]
+            u32 residualCount; // NOTE(michiel): <= blockSize
+            s32 *residual;     // NOTE(michiel): [residualCount]
+            s32 quantization;  // NOTE(michiel): Only used for lpc (amount of shift after fir)
+            s32 *coefficients; // NOTE(michiel): [order] Only used for lpc
+        };
+    };
+};
+
+struct FlacFrame
+{
+    u32 blockSize;
+    u32 sampleRate;
+    b32 variableBlocks;
+    u32 bitsPerSample;
+    u32 channelCount;
+    u32 channelAssignment;
+    
+    union
+    {
+        struct {
+            u64 frameCount;
+            FlacSubframe *subFrames; // NOTE(michiel): [frameCount * channelCount]
+        };
+        struct {
+            u64 sampleCount;
+            s32 *samples; // NOTE(michiel): [sampleCount * channelCount]
+        };
+    };
+};
+
+// TODO(michiel): Parse the whole stream into a single flac struct?
+// Or just make a block processor that can decode a single block...
+// It could be just given data and start looking for a sync frame...
+//
+// struct FlacContext { allocator, arena, ... who knows };
+// s32 *samples = flac_decode(FlacContext *context, umm dataCount, u8 *data);
+// 
+// And should we make it possible to get the meta data from a file, maybe
+// return more than just the samples. Like artist/album info, channel assignment.
+// And do we want to interleave the channels or just pass them around as
+// seperate buffers? The flac format lends itself better for seperation, but
+// interleaving is not that hard, and most hardware and .wav is interleaved.
+//
+// Blocks: 
+//   - constant => single value for whole block
+//   - verbatim => uncompressed data, needs whole block size per subframe/channel
+//   - fixed    => 0-4th order LPC
+//         - 0: out[n] = 1*res[n]
+//         - 1: out[n] = 1*res[n] + 1*out[n-1]
+//         - 2: out[n] = 1*res[n] + 2*out[n-1] - 1*out[n-2]
+//         - 3: out[n] = 1*res[n] + 3*out[n-1] - 3*out[n-2] + 1*out[n-3]
+//         - 4: out[n] = 1*res[n] + 4*out[n-1] - 6*out[n-2] + 4*out[n-3] - 1*out[n-4]
+//   - lpc      => 0-32 FIR LPC
+//         - 3: out[n] = res[n] + (fir(coefs, out, n) >> quantization)
+//
+// All blocks are self contained, have the warmup values for the fir/fixed predictors...
+// 
