@@ -9,8 +9,8 @@ struct FlacInfo
     u32 minFrameBytes;   // NOTE(michiel): <24> 	The minimum frame size (in bytes) used in the stream. May be 0 to imply the value is not known.
     u32 maxFrameBytes;   // NOTE(michiel): <24> 	The maximum frame size (in bytes) used in the stream. May be 0 to imply the value is not known.
     u32 sampleRate;      // NOTE(michiel): <20> 	Sample rate in Hz. Though 20 bits are available, the maximum sample rate is limited by the structure of frame headers to 655350Hz. Also, a value of 0 is invalid.
-    u16 channelCount;    // NOTE(michiel): <3> 	(number of channels)-1. FLAC supports from 1 to 8 channels
-    u16 bitsPerSample;   // NOTE(michiel): <5> 	(bits per sample)-1. FLAC supports from 4 to 32 bits per sample. Currently the reference encoder and decoders only support up to 24 bits per sample.
+    u16 channelCount;    // NOTE(michiel): <3> 	(number of channels). FLAC supports from 1 to 8 channels
+    u16 bitsPerSample;   // NOTE(michiel): <5> 	(bits per sample). FLAC supports from 4 to 32 bits per sample. Currently the reference encoder and decoders only support up to 24 bits per sample.
     u64 totalSamples;    // NOTE(michiel): <36> 	Total samples in stream. 'Samples' means inter-channel sample, i.e. one second of 44.1Khz audio will have 44100 samples regardless of the number of channels. A value of zero here means the number of total samples is unknown.
     struct 
     {

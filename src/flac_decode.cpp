@@ -1,13 +1,14 @@
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <memory.h>
-#include <assert.h>
-
 #include "../libberdip/platform.h"
 
+#include <alsa/asoundlib.h>
+
+#include "./platform_sound.h"
+
+#include "./linux_sound.h"
+#include "./linux_sound.cpp"
+
 #ifndef FLAC_DEBUG_LEVEL
-#define FLAC_DEBUG_LEVEL  0
+#define FLAC_DEBUG_LEVEL  1
 #endif
 
 #include "flac.h"
@@ -17,6 +18,15 @@
 
 #include "bitstreamer.cpp"
 #include "flac.cpp"
+
+internal s32
+get_signed32_left(BitStreamer *bitStream, u32 bitCount)
+{
+    i_expect(bitCount);
+    i_expect(bitCount <= 32);
+    s32 result = ((s32)get_bits(bitStream, bitCount) << (32 - bitCount));
+    return result;
+}
 
 internal s32
 get_signed32(BitStreamer *bitStream, u32 bitCount)
@@ -33,7 +43,7 @@ process_constant(BitStreamer *bitStream, u32 bitsPerSample,
                  u32 blockCount, s32 *samples)
 {
     // NOTE(michiel): expects samples[blockCount]
-    s32 constant = get_signed32(bitStream, bitsPerSample);
+    s32 constant = get_signed32_left(bitStream, bitsPerSample);
     s32 *dst = samples;
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
@@ -49,7 +59,7 @@ process_verbatim(BitStreamer *bitStream, u32 bitsPerSample,
     s32 *dst = samples;
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
-        s32 source = get_signed32(bitStream, bitsPerSample);
+        s32 source = get_signed32_left(bitStream, bitsPerSample);
         *dst++ = source;
     }
 }
@@ -115,6 +125,11 @@ process_fixed(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
         
         INVALID_DEFAULT_CASE;
     }
+    
+    for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
+    {
+        samples[blockIdx] = samples[blockIdx] << (32 - bitsPerSample);
+    }
 }
 
 internal void
@@ -143,12 +158,78 @@ process_lpc(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
     s32 *res = (s32 *)residual.data;
     for (u32 blockIdx = order; blockIdx < blockCount; ++blockIdx)
     {
-        s32 value = 0;
+        s64 value = 0;
         for (u32 coef = 0; coef < order; ++coef)
         {
-            value += coefficients[coef] * samples[blockIdx - coef - 1];
+            value += (s64)coefficients[coef] * (s64)samples[blockIdx - coef - 1];
         }
-        samples[blockIdx] = *res++ + (value >> quantize);
+        samples[blockIdx] = *res++ + (s32)(value >> quantize);
+    }
+    
+    for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
+    {
+        samples[blockIdx] = samples[blockIdx] << (32 - bitsPerSample);
+    }
+}
+
+internal void
+interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *samplesOut)
+{
+    if (channelAssignment > FlacChannel_FrontLRCSubBackLRSideLR)
+    {
+        // NOTE(michiel): Calc and interleave
+        switch (channelAssignment)
+        {
+            case FlacChannel_LeftSide:
+            {
+                for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+                {
+                    s32 left = samplesIn[sampleIdx];
+                    s32 diff = samplesIn[sampleIdx + sampleCount];
+                    
+                    samplesOut[sampleIdx * 2 + 0] = left;
+                    samplesOut[sampleIdx * 2 + 1] = ((left >> 1) - diff) << 1;
+                }
+            } break;
+            
+            case FlacChannel_SideRight:
+            {
+                for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+                {
+                    s32 diff  = samplesIn[sampleIdx];
+                    s32 right = samplesIn[sampleIdx + sampleCount];
+                    
+                    samplesOut[sampleIdx * 2 + 0] = ((right >> 1) - diff) << 1;
+                    samplesOut[sampleIdx * 2 + 1] = right;
+                }
+            } break;
+            
+            case FlacChannel_MidSide:
+            {
+                for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+                {
+                    s32 mid  = samplesIn[sampleIdx];
+                    s32 side = samplesIn[sampleIdx + sampleCount];
+                    
+                    samplesOut[sampleIdx * 2 + 0] = mid + (side >> 1);
+                    samplesOut[sampleIdx * 2 + 1] = mid - (side >> 1);
+                }
+            } break;
+            
+            INVALID_DEFAULT_CASE;
+        }
+    }
+    else
+    {
+        // NOTE(michiel): Just interleave
+        u32 channelCount = channelAssignment + 1;
+        for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+        {
+            for (u32 channelIdx = 0; channelIdx < channelCount; ++channelIdx)
+            {
+                samplesOut[sampleIdx * channelCount + channelIdx] = samplesIn[channelIdx * sampleCount + sampleIdx];
+            }
+        }
     }
 }
 
@@ -389,172 +470,148 @@ int main(int argc, char **argv)
     //FlacFrame *frame = allocate_struct(FlacFrame);
     //init_flac_frame(info);
     
-    umm totalSampleCount = info->totalSamples * info->channelCount;
-    s32 *testSamples     = allocate_array(s32, totalSampleCount);
-    umm testSampleIndex  = 0;
+    i_expect(info->minBlockSamples == info->maxBlockSamples);
+    u32 totalSampleCount = (u32)info->maxBlockSamples * info->channelCount;
+    s32 *testSamples1 = allocate_array(s32, totalSampleCount);
+    s32 *testSamples2 = allocate_array(s32, totalSampleCount);
     
-    while (bitStream->at != bitStream->end)
+    SoundDevice soundDev_ = {};
+    SoundDevice *soundDev = &soundDev_;
+    soundDev->sampleFrequency = info->sampleRate;
+    soundDev->sampleCount = info->maxBlockSamples;
+    soundDev->channelCount = info->channelCount;
+    
+    if (platform_sound_init(soundDev))
     {
-        u8 *crcStart = bitStream->at;
-        FlacFrameHeader frameHeader = parse_frame_header(bitStream, info);
-        //set_flac_frame(frame, info, &frameHeader);
-        
+        while (bitStream->at != bitStream->end)
+        {
+            u8 *crcStart = bitStream->at;
+            FlacFrameHeader frameHeader = parse_frame_header(bitStream, info);
+            //set_flac_frame(frame, info, &frameHeader);
+            i_expect(frameHeader.blockSize <= info->maxBlockSamples);
+            
 #if FLAC_DEBUG_LEVEL
-        char *channelType = "";
-        switch (frameHeader.channelAssignment)
-        {
-            case FlacChannel_Mono:      { channelType = "M"; } break;
-            case FlacChannel_LeftRight: { channelType = "L/R"; } break;
-            case FlacChannel_LeftRightCenter: { channelType = "L/R/C"; } break;
-            case FlacChannel_FrontLRBackLR: { channelType = "FL/FR/BL/BR"; } break;
-            case FlacChannel_FrontLRCBackLR: { channelType = "FL/FR/FC/BL/BR"; } break;
-            case FlacChannel_FrontLRCSubBackLR: { channelType = "FL/FR/FC/LFE/BL/BR"; } break;
-            case FlacChannel_FrontLRCSubBackCLR: { channelType = "FL/FR/FC/LFE/BC/BL/BR"; } break;
-            case FlacChannel_FrontLRCSubBackLRSideLR: { channelType = "FL/FR/FC/LFE/BL/BR/SL/SR"; } break;
-            case FlacChannel_LeftSide:  { channelType = "L/S"; } break;
-            case FlacChannel_SideRight: { channelType = "S/R"; } break;
-            case FlacChannel_MidSide:   { channelType = "M/S"; } break;
-            default: break;
-        }
-        
-        fprintf(stdout, "Frame header %lu:\n", frameHeader.frameNumber);
-        fprintf(stdout, "%sblocking          : %s-blocksize stream\n", indent,
-                (frameHeader.variableBlocks) ? "variable" : "fixed");
-        fprintf(stdout, "%sblock size        : %d samples\n", indent, frameHeader.blockSize);
-        fprintf(stdout, "%ssample rate       : %d Hz\n", indent, frameHeader.sampleRate);
-        fprintf(stdout, "%schannel count     : %u\n", indent, frameHeader.channelCount);
-        fprintf(stdout, "%schannel assignment: %s\n", indent, channelType);
-        fprintf(stdout, "%ssample size       : %d bits\n", indent, frameHeader.bitsPerSample);
-#endif
-        
-        for (u32 subChannelIndex = 0; subChannelIndex < frameHeader.channelCount; ++subChannelIndex)
-        {
-            FlacSubframeHeader subframeHeader = parse_subframe_header(bitStream, &frameHeader, subChannelIndex);
-            
-#if FLAC_DEBUG_LEVEL > 1
-            char *subframeType = "";
-            switch (subframeHeader.type)
+            char *channelType = "";
+            switch (frameHeader.channelAssignment)
             {
-                case FlacSubframe_Constant: { subframeType = "constant"; } break;
-                case FlacSubframe_Verbatim: { subframeType = "verbatim"; } break;
-                case FlacSubframe_Fixed: { subframeType = "fixed"; } break;
-                case FlacSubframe_LPC: { subframeType = "lpc"; } break;
-                case FlacSubframe_Error: { subframeType = "error"; } break;
-                default: { subframeType = "reserved"; } break;
-            }
-            fprintf(stdout, "Subframe type: %s (%u)\n", subframeType, subframeHeader.typeOrder);
-            fprintf(stdout, "Wasted bits: %s (%u)\n", (subframeHeader.wastedBits) ? "true" : "false", subframeHeader.wastedBits);
-#endif
-            
-            u32 bps = frameHeader.bitsPerSample;
-            if ((((frameHeader.channelAssignment == FlacChannel_LeftSide) ||
-                  (frameHeader.channelAssignment == FlacChannel_MidSide)) &&
-                 (subChannelIndex == 1)) ||
-                ((frameHeader.channelAssignment == FlacChannel_SideRight) &&
-                 (subChannelIndex == 0)))
-            {
-                // NOTE(michiel): Not in spec, but the side channel (L - R) is 1 bit larger to account for overflows.
-                ++bps;
+                case FlacChannel_Mono:      { channelType = "M"; } break;
+                case FlacChannel_LeftRight: { channelType = "L/R"; } break;
+                case FlacChannel_LeftRightCenter: { channelType = "L/R/C"; } break;
+                case FlacChannel_FrontLRBackLR: { channelType = "FL/FR/BL/BR"; } break;
+                case FlacChannel_FrontLRCBackLR: { channelType = "FL/FR/FC/BL/BR"; } break;
+                case FlacChannel_FrontLRCSubBackLR: { channelType = "FL/FR/FC/LFE/BL/BR"; } break;
+                case FlacChannel_FrontLRCSubBackCLR: { channelType = "FL/FR/FC/LFE/BC/BL/BR"; } break;
+                case FlacChannel_FrontLRCSubBackLRSideLR: { channelType = "FL/FR/FC/LFE/BL/BR/SL/SR"; } break;
+                case FlacChannel_LeftSide:  { channelType = "L/S"; } break;
+                case FlacChannel_SideRight: { channelType = "S/R"; } break;
+                case FlacChannel_MidSide:   { channelType = "M/S"; } break;
+                default: break;
             }
             
-            if (subframeHeader.type == FlacSubframe_Constant)
-            {
-                process_constant(bitStream, bps, frameHeader.blockSize, testSamples + testSampleIndex);
-            }
-            else if (subframeHeader.type == FlacSubframe_Verbatim)
-            {
-                process_verbatim(bitStream, bps, frameHeader.blockSize, testSamples + testSampleIndex);
-#if 0                
-                //umm totalBits = bps * frameHeader.blockSize;
-                for (u32 x = 0; x < frameHeader.blockSize; ++x)
-                {
-                    (void)get_bits(bitStream, bps);
-                }
+            fprintf(stdout, "Frame header %lu:\n", frameHeader.frameNumber);
+            fprintf(stdout, "%sblocking          : %s-blocksize stream\n", indent,
+                    (frameHeader.variableBlocks) ? "variable" : "fixed");
+            fprintf(stdout, "%sblock size        : %d samples\n", indent, frameHeader.blockSize);
+            fprintf(stdout, "%ssample rate       : %d Hz\n", indent, frameHeader.sampleRate);
+            fprintf(stdout, "%schannel count     : %u\n", indent, frameHeader.channelCount);
+            fprintf(stdout, "%schannel assignment: %s\n", indent, channelType);
+            fprintf(stdout, "%ssample size       : %d bits\n", indent, frameHeader.bitsPerSample);
 #endif
-            }
-            else if (subframeHeader.type == FlacSubframe_Fixed)
+            
+            u32 testSampleIndex = 0;
+            for (u32 subChannelIndex = 0; subChannelIndex < frameHeader.channelCount; ++subChannelIndex)
             {
-                process_fixed(bitStream, subframeHeader.typeOrder, bps,
-                              frameHeader.blockSize, testSamples + testSampleIndex);
-#if 0                
-                u32 fixedOrder = subframeHeader.typeOrder;
-                //umm totalBits = bps * fixedOrder;
-                for (u32 x = 0; x < fixedOrder; ++x)
-                {
-                    s32 warmup = (s32)(get_bits(bitStream, bps) << (32 - bps)) >> (32 - bps);
-#if FLAC_DEBUG_LEVEL > 1
-                    fprintf(stdout, "%swarmup(%d): %d\n", indent, x, warmup);
-#else
-                    unused(warmup);
-#endif
-                }
-                parse_residual_coding(bitStream, fixedOrder, frameHeader.blockSize);
-#endif
-            }
-            else if (subframeHeader.type == FlacSubframe_LPC)
-            {
-                process_lpc(bitStream, subframeHeader.typeOrder, bps,
-                            frameHeader.blockSize, testSamples + testSampleIndex);
-#if 0                
-                // NOTE(michiel): LPC
-                u32 lpcOrder = subframeHeader.typeOrder;
-                s32 warmupSamples[32];
-                for (u32 warmupIndex = 0; warmupIndex < lpcOrder; ++warmupIndex)
-                {
-                    warmupSamples[warmupIndex] = (s32)(get_bits(bitStream, bps) << (32 - bps)) >> (32 - bps);
-                }
-                u32 linearPredictorCoeffPrecision = get_bits(bitStream, 4) + 1;
-                i_expect(linearPredictorCoeffPrecision < 16);
-                s32 lpcQuantization = ((s32)(s8)(get_bits(bitStream, 5) << 3)) >> 3;
-                s32 predictorCoeffs[512];
-                
-                u32 lpcp = linearPredictorCoeffPrecision;
-                for (u32 coeffIndex = 0; coeffIndex < lpcOrder; ++coeffIndex)
-                {
-                    predictorCoeffs[coeffIndex] = (s32)(get_bits(bitStream, lpcp) << (32 - lpcp)) >> (32 - lpcp);
-                }
+                FlacSubframeHeader subframeHeader = parse_subframe_header(bitStream, &frameHeader, subChannelIndex);
                 
 #if FLAC_DEBUG_LEVEL > 1
-                fprintf(stdout, "%slpc order : %d\n", indent, lpcOrder);
-                for (u32 warmupIndex = 0; warmupIndex < lpcOrder; ++warmupIndex)
+                char *subframeType = "";
+                switch (subframeHeader.type)
                 {
-                    fprintf(stdout, "%swarmup(%d): %d\n", indent, warmupIndex, warmupSamples[warmupIndex]);
+                    case FlacSubframe_Constant: { subframeType = "constant"; } break;
+                    case FlacSubframe_Verbatim: { subframeType = "verbatim"; } break;
+                    case FlacSubframe_Fixed: { subframeType = "fixed"; } break;
+                    case FlacSubframe_LPC: { subframeType = "lpc"; } break;
+                    case FlacSubframe_Error: { subframeType = "error"; } break;
+                    default: { subframeType = "reserved"; } break;
                 }
-                fprintf(stdout, "%sprecision : %d\n", indent, linearPredictorCoeffPrecision);
-                fprintf(stdout, "%sshift     : %d\n", indent, lpcQuantization);
-                for (u32 coeffIndex = 0; coeffIndex < lpcOrder; ++coeffIndex)
-                {
-                    fprintf(stdout, "%scoeff(%d) : %d\n", indent, coeffIndex, predictorCoeffs[coeffIndex]);
-                }
+                fprintf(stdout, "Subframe type: %s (%u)\n", subframeType, subframeHeader.typeOrder);
+                fprintf(stdout, "Wasted bits: %s (%u)\n", (subframeHeader.wastedBits) ? "true" : "false", subframeHeader.wastedBits);
 #endif
                 
-                parse_residual_coding(bitStream, lpcOrder, frameHeader.blockSize);
-#endif
+                u32 bps = frameHeader.bitsPerSample;
+                if ((((frameHeader.channelAssignment == FlacChannel_LeftSide) ||
+                      (frameHeader.channelAssignment == FlacChannel_MidSide)) &&
+                     (subChannelIndex == 1)) ||
+                    ((frameHeader.channelAssignment == FlacChannel_SideRight) &&
+                     (subChannelIndex == 0)))
+                {
+                    // NOTE(michiel): Not in spec, but the side channel (L - R) is 1 bit larger to account for overflows.
+                    ++bps;
+                }
                 
+                switch (subframeHeader.type)
+                {
+                    case FlacSubframe_Constant:
+                    {
+                        process_constant(bitStream, bps, frameHeader.blockSize, testSamples1 + testSampleIndex);
+                    } break;
+                    
+                    case FlacSubframe_Verbatim:
+                    {
+                        process_verbatim(bitStream, bps, frameHeader.blockSize, testSamples1 + testSampleIndex);
+                    } break;
+                    
+                    case FlacSubframe_Fixed:
+                    {
+                        process_fixed(bitStream, subframeHeader.typeOrder, bps,
+                                      frameHeader.blockSize, testSamples1 + testSampleIndex);
+                    } break;
+                    
+                    case FlacSubframe_LPC:
+                    {
+                        process_lpc(bitStream, subframeHeader.typeOrder, bps,
+                                    frameHeader.blockSize, testSamples1 + testSampleIndex);
+                    } break;
+                    
+                    INVALID_DEFAULT_CASE;
+                }
+                
+                testSampleIndex += frameHeader.blockSize;
+            }
+            
+            bitStream->remainingBits = 0;
+            bitStream->remainingData = 0;
+            
+            u16 crcTable[256];
+            crc16_init_table(0x8005, crcTable);
+            u16 crcCheck = crc16_calc_crc(crcTable, bitStream->at - crcStart, crcStart);
+            u16 crcFile = get_bits(bitStream, 16);
+            
+            if (crcFile != crcCheck)
+            {
+                fprintf(stderr, "CRC16 calc: %04X, CRC16 file: %04X\n", crcCheck, crcFile);
+            }
+            i_expect(crcFile == crcCheck);
+            
+            interleave_samples(frameHeader.channelAssignment, frameHeader.blockSize, testSamples1, testSamples2);
+            if (platform_sound_write_s32(soundDev, testSamples2))
+            {
+                // NOTE(michiel): Fine
             }
             else
             {
-                fprintf(stderr, "Invalid subframe!\n");
+                fprintf(stderr, "Sound write failed:\n    ");
+                fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                break;
             }
-            //testSampleIndex += frameHeader.blockSize;
         }
-        
-        //interleave_samples();
-        
-        bitStream->remainingBits = 0;
-        bitStream->remainingData = 0;
-        
-        u16 crcTable[256];
-        crc16_init_table(0x8005, crcTable);
-        u16 crcCheck = crc16_calc_crc(crcTable, bitStream->at - crcStart, crcStart);
-        u16 crcFile = get_bits(bitStream, 16);
-        
-        if (crcFile != crcCheck)
-        {
-            fprintf(stderr, "CRC16 calc: %04X, CRC16 file: %04X\n", crcCheck, crcFile);
-        }
-        i_expect(crcFile == crcCheck);
     }
+    else
+    {
+        fprintf(stderr, "Sound initialization failed:\n    ");
+        fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+    }
+    
     
     return 0;
 }

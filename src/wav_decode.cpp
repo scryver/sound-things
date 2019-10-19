@@ -26,7 +26,8 @@ get_signed32(u8 *data, u32 bitCount)
 
 s32 main(s32 argc, char **argv)
 {
-    Buffer wavFile = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    //Buffer wavFile = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    Buffer wavFile = read_entire_file(static_string("data/11 Info Dump.wav"));
     
     if (wavFile.size)
     {
@@ -72,6 +73,8 @@ s32 main(s32 argc, char **argv)
                             srcPointer += (chunk->size + 1) & ~1;
                             
                             i_expect((format->sampleSize % 8) == 0);
+                            
+                            fprintf(stdout, "Data chunk (%u)\n", chunk->size);
                             
                             u8 *ptr = data->data;
                             s32 left = get_signed32(ptr, format->sampleSize);

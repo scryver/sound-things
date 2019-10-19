@@ -2,6 +2,8 @@
 
 set -e
 
+echo Building...
+
 curDir="$(pwd)"
 codeDir="$curDir/src"
 buildDir="$curDir/gebouw"
@@ -13,7 +15,8 @@ exceptions="-Wno-unused-function -Wno-writable-strings -Wno-gnu-zero-variadic-ma
 mkdir -p "$buildDir"
 
 pushd "$buildDir" > /dev/null
-    clang++ $flags $exceptions "$codeDir/flac_decode.cpp" -o flacdecode
+    clang++ $flags $exceptions "$codeDir/flac_decode.cpp" -o flacdecode -lasound
     clang++ $flags $exceptions "$codeDir/wav_decode.cpp" -o wavdecode
+    clang++ $flags $exceptions "$codeDir/sound.cpp" -o make-sound -lasound
 popd > /dev/null
 
