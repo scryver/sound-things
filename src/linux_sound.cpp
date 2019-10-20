@@ -215,47 +215,42 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
     u32 channelCount = device->channelCount ? device->channelCount : 2;
     SoundFormat format = device->format ? device->format : SoundFormat_s16;
     
-    device->platform = allocate_struct(AlsaDevice);
-    
-    if (device->platform)
+    if (!device->platform)
     {
-        AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
-        s32 error = snd_output_stdio_attach(&alsaDev->stdout, stdout, 0);
+        device->platform = allocate_struct(AlsaDevice);
+    }
+    
+    AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
+    s32 error = snd_output_stdio_attach(&alsaDev->stdout, stdout, 0);
+    if (error >= 0)
+    {
+        alsaDev->name = "default";
+        error = snd_pcm_hw_params_malloc(&alsaDev->hwParams);
+        
         if (error >= 0)
         {
-            alsaDev->name = "default";
-            error = snd_pcm_hw_params_malloc(&alsaDev->hwParams);
-            
+            // TODO(michiel): Blocking or non-blocking??
+            error = snd_pcm_open(&alsaDev->pcmHandle, alsaDev->name, SND_PCM_STREAM_PLAYBACK, 0);
             if (error >= 0)
             {
-                error = snd_pcm_open(&alsaDev->pcmHandle, alsaDev->name, SND_PCM_STREAM_PLAYBACK, 0);
-                if (error >= 0)
+                if (alsa_hardware_init(alsaDev, sampleFrequency, sampleCount, channelCount, format))
                 {
-                    if (alsa_hardware_init(alsaDev, sampleFrequency, sampleCount, channelCount, format))
+                    error = snd_pcm_hw_params(alsaDev->pcmHandle, alsaDev->hwParams);
+                    if (error >= 0)
                     {
-                        error = snd_pcm_hw_params(alsaDev->pcmHandle, alsaDev->hwParams);
+                        error = snd_pcm_sw_params_malloc(&alsaDev->swParams);
                         if (error >= 0)
                         {
-                            error = snd_pcm_sw_params_malloc(&alsaDev->swParams);
-                            if (error >= 0)
+                            if (alsa_software_init(alsaDev, sampleCount))
                             {
-                                if (alsa_software_init(alsaDev, sampleCount))
+                                error = snd_pcm_sw_params(alsaDev->pcmHandle, alsaDev->swParams);
+                                if (error >= 0)
                                 {
-                                    error = snd_pcm_sw_params(alsaDev->pcmHandle, alsaDev->swParams);
-                                    if (error >= 0)
-                                    {
-                                        result = true;
-                                    }
-                                    else
-                                    {
-                                        alsa_set_error(alsaDev, error, "Set sw params failed: ");
-                                        snd_pcm_sw_params_free(alsaDev->swParams);
-                                        snd_pcm_close(alsaDev->pcmHandle);
-                                        snd_pcm_hw_params_free(alsaDev->hwParams);
-                                    }
+                                    result = true;
                                 }
                                 else
                                 {
+                                    alsa_set_error(alsaDev, error, "Set sw params failed: ");
                                     snd_pcm_sw_params_free(alsaDev->swParams);
                                     snd_pcm_close(alsaDev->pcmHandle);
                                     snd_pcm_hw_params_free(alsaDev->hwParams);
@@ -263,44 +258,45 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
                             }
                             else
                             {
-                                alsa_set_error(alsaDev, error, "Allocate sw params failed: ");
+                                snd_pcm_sw_params_free(alsaDev->swParams);
                                 snd_pcm_close(alsaDev->pcmHandle);
                                 snd_pcm_hw_params_free(alsaDev->hwParams);
                             }
                         }
                         else
                         {
-                            alsa_set_error(alsaDev, error, "Set hw params failed: ");
+                            alsa_set_error(alsaDev, error, "Allocate sw params failed: ");
                             snd_pcm_close(alsaDev->pcmHandle);
                             snd_pcm_hw_params_free(alsaDev->hwParams);
                         }
                     }
                     else
                     {
+                        alsa_set_error(alsaDev, error, "Set hw params failed: ");
                         snd_pcm_close(alsaDev->pcmHandle);
                         snd_pcm_hw_params_free(alsaDev->hwParams);
                     }
                 }
                 else
                 {
-                    alsa_set_error(alsaDev, error, "Opening PCM stream failed: ");
+                    snd_pcm_close(alsaDev->pcmHandle);
                     snd_pcm_hw_params_free(alsaDev->hwParams);
                 }
             }
             else
             {
-                alsa_set_error(alsaDev, error, "Allocate hw params failed: ");
+                alsa_set_error(alsaDev, error, "Opening PCM stream failed: ");
+                snd_pcm_hw_params_free(alsaDev->hwParams);
             }
         }
         else
         {
-            alsa_set_error(alsaDev, error, "Attaching stdout failed: ");
+            alsa_set_error(alsaDev, error, "Allocate hw params failed: ");
         }
-        
-        if (result)
-        {
-            alsaDev->sampleBuffer = allocate_array(s16, sampleCount * channelCount);
-        }
+    }
+    else
+    {
+        alsa_set_error(alsaDev, error, "Attaching stdout failed: ");
     }
     
     device->sampleFrequency = sampleFrequency;
@@ -314,11 +310,27 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
 internal PLATFORM_SOUND_REFORMAT(linux_sound_reformat)
 {
     b32 result = false;
+    
+    if (device->platform)
+    {
+        AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
+        snd_pcm_drain(alsaDev->pcmHandle);
+        
+        snd_pcm_sw_params_free(alsaDev->swParams);
+        snd_pcm_close(alsaDev->pcmHandle);
+        snd_pcm_hw_params_free(alsaDev->hwParams);
+        
+        usleep(100000);
+    }
+    
+    result = linux_sound_init(device);
+    
     return result;
 }
 
 internal PLATFORM_SOUND_WRITE(linux_sound_write)
 {
+    // NOTE(michiel): Should this be blocking??
     b32 result = false;
     
     if (device->platform)

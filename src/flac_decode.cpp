@@ -239,8 +239,8 @@ PlatformSoundWrite *platform_sound_write = linux_sound_write;
 
 int main(int argc, char **argv)
 {
-    //Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
-    Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
+    Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
+    //Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
     
     BitStreamer bitStream_ = {};
     BitStreamer *bitStream = &bitStream_;

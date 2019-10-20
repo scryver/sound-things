@@ -8,8 +8,6 @@ struct AlsaDevice
     
     snd_pcm_format_t format;
     
-    s16 *sampleBuffer;
-    
     snd_output_t *stdout;
     
     u8 errorBuffer[256];

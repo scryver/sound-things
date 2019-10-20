@@ -34,35 +34,40 @@ s32 main(s32 argc, char **argv)
         s32 *soundBufferS32 = allocate_array(s32, soundDev->sampleCount * soundDev->channelCount);
         s16 *soundBufferS16 = allocate_array(s16, soundDev->sampleCount * soundDev->channelCount);
         
+        u32 stepsPerFormat = 128;
         f32 stepAt = 0.0f;
         while (1)
         {
             soundDev->format = SoundFormat_f32;
             if (platform_sound_reformat(soundDev))
             {
-                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+                fprintf(stdout, "Generating float 32bits\n");
+                for (u32 x = 0; x < stepsPerFormat; ++x)
                 {
-                    f32 sample = sin_f32(stepAt);
-                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                     {
-                        soundBufferF32[soundDev->channelCount * bufIdx + channelIdx] = 0.01f * sample;
+                        f32 sample = sin_f32(stepAt);
+                        for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                        {
+                            soundBufferF32[soundDev->channelCount * bufIdx + channelIdx] = 0.01f * sample;
+                        }
+                        stepAt += step;
+                        if (stepAt >= 1.0f)
+                        {
+                            stepAt -= 1.0f;
+                        }
                     }
-                    stepAt += step;
-                    if (stepAt >= 1.0f)
+                    
+                    if (platform_sound_write(soundDev, soundBufferF32))
                     {
-                        stepAt -= 1.0f;
+                        // NOTE(michiel): Nothing special
                     }
-                }
-                
-                if (platform_sound_write(soundDev, soundBufferF32))
-                {
-                    // NOTE(michiel): Nothing special
-                }
-                else
-                {
-                    fprintf(stderr, "Sound write failed:\n    ");
-                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
-                    break;
+                    else
+                    {
+                        fprintf(stderr, "Sound write failed:\n    ");
+                        fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                        break;
+                    }
                 }
             }
             else
@@ -75,29 +80,33 @@ s32 main(s32 argc, char **argv)
             soundDev->format = SoundFormat_s32;
             if (platform_sound_reformat(soundDev))
             {
-                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+                fprintf(stdout, "Generating signed 32bits\n");
+                for (u32 x = 0; x < stepsPerFormat; ++x)
                 {
-                    f32 sample = sin_f32(stepAt);
-                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                     {
-                        soundBufferS32[soundDev->channelCount * bufIdx + channelIdx] = s32_from_f32_round(0.01f * S32_MAX * sample);
+                        f32 sample = sin_f32(stepAt);
+                        for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                        {
+                            soundBufferS32[soundDev->channelCount * bufIdx + channelIdx] = s32_from_f32_round(0.01f * S32_MAX * sample);
+                        }
+                        stepAt += step;
+                        if (stepAt >= 1.0f)
+                        {
+                            stepAt -= 1.0f;
+                        }
                     }
-                    stepAt += step;
-                    if (stepAt >= 1.0f)
+                    
+                    if (platform_sound_write(soundDev, soundBufferS32))
                     {
-                        stepAt -= 1.0f;
+                        // NOTE(michiel): Nothing special
                     }
-                }
-                
-                if (platform_sound_write(soundDev, soundBufferS32))
-                {
-                    // NOTE(michiel): Nothing special
-                }
-                else
-                {
-                    fprintf(stderr, "Sound write failed:\n    ");
-                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
-                    break;
+                    else
+                    {
+                        fprintf(stderr, "Sound write failed:\n    ");
+                        fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                        break;
+                    }
                 }
             }
             else
@@ -110,29 +119,33 @@ s32 main(s32 argc, char **argv)
             soundDev->format = SoundFormat_s16;
             if (platform_sound_reformat(soundDev))
             {
-                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+                fprintf(stdout, "Generating signed 16bits\n");
+                for (u32 x = 0; x < stepsPerFormat; ++x)
                 {
-                    f32 sample = sin_f32(stepAt);
-                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                     {
-                        soundBufferS16[soundDev->channelCount * bufIdx + channelIdx] = s16_from_f32_round(0.01f * S16_MAX * sample);
+                        f32 sample = sin_f32(stepAt);
+                        for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                        {
+                            soundBufferS16[soundDev->channelCount * bufIdx + channelIdx] = s16_from_f32_round(0.01f * S16_MAX * sample);
+                        }
+                        stepAt += step;
+                        if (stepAt >= 1.0f)
+                        {
+                            stepAt -= 1.0f;
+                        }
                     }
-                    stepAt += step;
-                    if (stepAt >= 1.0f)
+                    
+                    if (platform_sound_write(soundDev, soundBufferS16))
                     {
-                        stepAt -= 1.0f;
+                        // NOTE(michiel): Nothing special
                     }
-                }
-                
-                if (platform_sound_write(soundDev, soundBufferS16))
-                {
-                    // NOTE(michiel): Nothing special
-                }
-                else
-                {
-                    fprintf(stderr, "Sound write failed:\n    ");
-                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
-                    break;
+                    else
+                    {
+                        fprintf(stderr, "Sound write failed:\n    ");
+                        fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                        break;
+                    }
                 }
             }
             else
