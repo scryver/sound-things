@@ -233,9 +233,14 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
     }
 }
 
+PlatformSoundErrorString *platform_sound_error_string = linux_sound_error_string;
+PlatformSoundInit *platform_sound_init = linux_sound_init;
+PlatformSoundWrite *platform_sound_write = linux_sound_write;
+
 int main(int argc, char **argv)
 {
-    Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
+    //Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
+    Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
     
     BitStreamer bitStream_ = {};
     BitStreamer *bitStream = &bitStream_;
@@ -480,6 +485,7 @@ int main(int argc, char **argv)
     soundDev->sampleFrequency = info->sampleRate;
     soundDev->sampleCount = info->maxBlockSamples;
     soundDev->channelCount = info->channelCount;
+    soundDev->format = SoundFormat_s32;
     
     if (platform_sound_init(soundDev))
     {
@@ -594,7 +600,8 @@ int main(int argc, char **argv)
             i_expect(crcFile == crcCheck);
             
             interleave_samples(frameHeader.channelAssignment, frameHeader.blockSize, testSamples1, testSamples2);
-            if (platform_sound_write_s32(soundDev, testSamples2))
+            soundDev->sampleCount = frameHeader.blockSize;
+            if (platform_sound_write(soundDev, testSamples2))
             {
                 // NOTE(michiel): Fine
             }

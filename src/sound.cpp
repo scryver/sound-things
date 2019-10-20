@@ -7,6 +7,11 @@
 #include "./linux_sound.h"
 #include "./linux_sound.cpp"
 
+PlatformSoundErrorString *platform_sound_error_string = linux_sound_error_string;
+PlatformSoundInit *platform_sound_init = linux_sound_init;
+PlatformSoundReformat *platform_sound_reformat = linux_sound_reformat;
+PlatformSoundWrite *platform_sound_write = linux_sound_write;
+
 s32 main(s32 argc, char **argv)
 {
     SoundDevice soundDev_ = {};
@@ -32,77 +37,107 @@ s32 main(s32 argc, char **argv)
         f32 stepAt = 0.0f;
         while (1)
         {
-            for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+            soundDev->format = SoundFormat_f32;
+            if (platform_sound_reformat(soundDev))
             {
-                f32 sample = sin_f32(stepAt);
-                for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                 {
-                    soundBufferF32[soundDev->channelCount * bufIdx + channelIdx] = 0.01f * sample;
+                    f32 sample = sin_f32(stepAt);
+                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    {
+                        soundBufferF32[soundDev->channelCount * bufIdx + channelIdx] = 0.01f * sample;
+                    }
+                    stepAt += step;
+                    if (stepAt >= 1.0f)
+                    {
+                        stepAt -= 1.0f;
+                    }
                 }
-                stepAt += step;
-                if (stepAt >= 1.0f)
+                
+                if (platform_sound_write(soundDev, soundBufferF32))
                 {
-                    stepAt -= 1.0f;
+                    // NOTE(michiel): Nothing special
                 }
-            }
-            
-            if (platform_sound_write_f32(soundDev, soundBufferF32))
-            {
-                // NOTE(michiel): Nothing special
+                else
+                {
+                    fprintf(stderr, "Sound write failed:\n    ");
+                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                    break;
+                }
             }
             else
             {
-                fprintf(stderr, "Sound write failed:\n    ");
+                fprintf(stderr, "Sound reinitialize failed:\n    ");
                 fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
                 break;
             }
             
-            for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+            soundDev->format = SoundFormat_s32;
+            if (platform_sound_reformat(soundDev))
             {
-                f32 sample = sin_f32(stepAt);
-                for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                 {
-                    soundBufferS32[soundDev->channelCount * bufIdx + channelIdx] = s32_from_f32_round(0.01f * S32_MAX * sample);
+                    f32 sample = sin_f32(stepAt);
+                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    {
+                        soundBufferS32[soundDev->channelCount * bufIdx + channelIdx] = s32_from_f32_round(0.01f * S32_MAX * sample);
+                    }
+                    stepAt += step;
+                    if (stepAt >= 1.0f)
+                    {
+                        stepAt -= 1.0f;
+                    }
                 }
-                stepAt += step;
-                if (stepAt >= 1.0f)
+                
+                if (platform_sound_write(soundDev, soundBufferS32))
                 {
-                    stepAt -= 1.0f;
+                    // NOTE(michiel): Nothing special
                 }
-            }
-            
-            if (platform_sound_write_s32(soundDev, soundBufferS32))
-            {
-                // NOTE(michiel): Nothing special
+                else
+                {
+                    fprintf(stderr, "Sound write failed:\n    ");
+                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                    break;
+                }
             }
             else
             {
-                fprintf(stderr, "Sound write failed:\n    ");
+                fprintf(stderr, "Sound reinitialize failed:\n    ");
                 fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
                 break;
             }
             
-            for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
+            soundDev->format = SoundFormat_s16;
+            if (platform_sound_reformat(soundDev))
             {
-                f32 sample = sin_f32(stepAt);
-                for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                for (u32 bufIdx = 0; bufIdx < soundDev->sampleCount; ++bufIdx)
                 {
-                    soundBufferS16[soundDev->channelCount * bufIdx + channelIdx] = s16_from_f32_round(0.01f * S16_MAX * sample);
+                    f32 sample = sin_f32(stepAt);
+                    for (u32 channelIdx = 0; channelIdx < soundDev->channelCount; ++channelIdx)
+                    {
+                        soundBufferS16[soundDev->channelCount * bufIdx + channelIdx] = s16_from_f32_round(0.01f * S16_MAX * sample);
+                    }
+                    stepAt += step;
+                    if (stepAt >= 1.0f)
+                    {
+                        stepAt -= 1.0f;
+                    }
                 }
-                stepAt += step;
-                if (stepAt >= 1.0f)
+                
+                if (platform_sound_write(soundDev, soundBufferS16))
                 {
-                    stepAt -= 1.0f;
+                    // NOTE(michiel): Nothing special
                 }
-            }
-            
-            if (platform_sound_write_s16(soundDev, soundBufferS16))
-            {
-                // NOTE(michiel): Nothing special
+                else
+                {
+                    fprintf(stderr, "Sound write failed:\n    ");
+                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                    break;
+                }
             }
             else
             {
-                fprintf(stderr, "Sound write failed:\n    ");
+                fprintf(stderr, "Sound reinitialize failed:\n    ");
                 fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
                 break;
             }

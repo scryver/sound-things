@@ -16,7 +16,7 @@ mkdir -p "$buildDir"
 
 pushd "$buildDir" > /dev/null
     clang++ $flags $exceptions "$codeDir/flac_decode.cpp" -o flacdecode -lasound
-    clang++ $flags $exceptions "$codeDir/wav_decode.cpp" -o wavdecode
+    clang++ $flags $exceptions "$codeDir/wav_decode.cpp" -o wavdecode -lasound
     clang++ $flags $exceptions "$codeDir/sound.cpp" -o make-sound -lasound
 popd > /dev/null
 

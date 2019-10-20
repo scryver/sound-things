@@ -11,7 +11,7 @@ alsa_set_error(AlsaDevice *device, s32 errorCode, char *fmt, ...)
 }
 
 internal b32
-alsa_hardware_init(AlsaDevice *device, u32 sampleFrequency, u32 sampleCount, u32 channelCount)
+alsa_hardware_init(AlsaDevice *device, u32 sampleFrequency, u32 sampleCount, u32 channelCount, SoundFormat format)
 {
     b32 result = false;
     
@@ -21,7 +21,19 @@ alsa_hardware_init(AlsaDevice *device, u32 sampleFrequency, u32 sampleCount, u32
         error = snd_pcm_hw_params_set_rate_resample(device->pcmHandle, device->hwParams, 0);
         if (error >= 0)
         {
-            error = snd_pcm_hw_params_set_format(device->pcmHandle, device->hwParams, SND_PCM_FORMAT_S16_LE);
+            switch (format)
+            {
+                case SoundFormat_s8:  { device->format = SND_PCM_FORMAT_S8; } break;
+                case SoundFormat_s16: { device->format = SND_PCM_FORMAT_S16_LE; } break;
+                case SoundFormat_s24: { device->format = SND_PCM_FORMAT_S24_3LE; } break;
+                case SoundFormat_s32: { device->format = SND_PCM_FORMAT_S32_LE; } break;
+                case SoundFormat_s64: { device->format = SND_PCM_FORMAT_S32_LE; } break;
+                case SoundFormat_f32: { device->format = SND_PCM_FORMAT_FLOAT_LE; } break;
+                case SoundFormat_f64: { device->format = SND_PCM_FORMAT_FLOAT64_LE; } break;
+                INVALID_DEFAULT_CASE;
+            }
+            
+            error = snd_pcm_hw_params_set_format(device->pcmHandle, device->hwParams, device->format);
             if (error >= 0)
             {
                 error = snd_pcm_hw_params_set_channels(device->pcmHandle, device->hwParams, channelCount);
@@ -113,7 +125,77 @@ alsa_software_init(AlsaDevice *device, u32 sampleCount)
     return result;
 }
 
-internal PLATFORM_SOUND_ERROR_STRING(platform_sound_error_string)
+internal b32
+linux_alsa_write(AlsaDevice *device, u32 sampleCount, void *buffer)
+{
+    b32 result = false;
+    
+    s32 error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
+    if (error >= 0)
+    {
+        result = true;
+    }
+    else if (error == -EPIPE)
+    {
+        error = snd_pcm_prepare(device->pcmHandle);
+        if (error >= 0)
+        {
+            error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
+            if (error >= 0)
+            {
+                result = true;
+            }
+            else
+            {
+                alsa_set_error(device, error, "Still can't write after a prepare: ");
+            }
+        }
+        else
+        {
+            alsa_set_error(device, error, "PCM prepare failed after underrun: ");
+        }
+    }
+    else if (error == -ESTRPIPE)
+    {
+        error = snd_pcm_resume(device->pcmHandle);
+        if (error >= 0)
+        {
+            error = snd_pcm_prepare(device->pcmHandle);
+            if (error >= 0)
+            {
+                error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
+                if (error >= 0)
+                {
+                    result = true;
+                }
+                else
+                {
+                    alsa_set_error(device, error, "Still can't write after a resume: ");
+                }
+            }
+            else
+            {
+                alsa_set_error(device, error, "PCM prepare failed after a suspend: ");
+            }
+        }
+        else
+        {
+            alsa_set_error(device, error, "PCM resume failed after a suspend: ");
+        }
+    }
+    else
+    {
+        alsa_set_error(device, error, "Sound write failed: ");
+    }
+    
+    return result;
+}
+
+//
+// NOTE(michiel): Platform calls
+//
+
+internal PLATFORM_SOUND_ERROR_STRING(linux_sound_error_string)
 {
     String result = {};
     if (device->platform)
@@ -124,13 +206,14 @@ internal PLATFORM_SOUND_ERROR_STRING(platform_sound_error_string)
     return result;
 }
 
-internal PLATFORM_SOUND_INIT(platform_sound_init)
+internal PLATFORM_SOUND_INIT(linux_sound_init)
 {
     b32 result = false;
     
     u32 sampleFrequency = device->sampleFrequency ? device->sampleFrequency : 44100;
     u32 sampleCount = device->sampleCount ? device->sampleCount : 1024;
     u32 channelCount = device->channelCount ? device->channelCount : 2;
+    SoundFormat format = device->format ? device->format : SoundFormat_s16;
     
     device->platform = allocate_struct(AlsaDevice);
     
@@ -148,7 +231,7 @@ internal PLATFORM_SOUND_INIT(platform_sound_init)
                 error = snd_pcm_open(&alsaDev->pcmHandle, alsaDev->name, SND_PCM_STREAM_PLAYBACK, 0);
                 if (error >= 0)
                 {
-                    if (alsa_hardware_init(alsaDev, sampleFrequency, sampleCount, channelCount))
+                    if (alsa_hardware_init(alsaDev, sampleFrequency, sampleCount, channelCount, format))
                     {
                         error = snd_pcm_hw_params(alsaDev->pcmHandle, alsaDev->hwParams);
                         if (error >= 0)
@@ -223,126 +306,61 @@ internal PLATFORM_SOUND_INIT(platform_sound_init)
     device->sampleFrequency = sampleFrequency;
     device->sampleCount = sampleCount;
     device->channelCount = channelCount;
+    device->format = format;
     
     return result;
 }
 
-internal b32
-linux_alsa_write(AlsaDevice *device, u32 sampleCount, s16 *buffer)
+internal PLATFORM_SOUND_REFORMAT(linux_sound_reformat)
 {
     b32 result = false;
-    
-    s32 error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
-    if (error >= 0)
-    {
-        result = true;
-    }
-    else if (error == -EPIPE)
-    {
-        error = snd_pcm_prepare(device->pcmHandle);
-        if (error >= 0)
-        {
-            error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
-            if (error >= 0)
-            {
-                result = true;
-            }
-            else
-            {
-                alsa_set_error(device, error, "Still can't write after a prepare: ");
-            }
-        }
-        else
-        {
-            alsa_set_error(device, error, "PCM prepare failed after underrun: ");
-        }
-    }
-    else if (error == -ESTRPIPE)
-    {
-        error = snd_pcm_resume(device->pcmHandle);
-        if (error >= 0)
-        {
-            error = snd_pcm_prepare(device->pcmHandle);
-            if (error >= 0)
-            {
-                error = snd_pcm_writei(device->pcmHandle, buffer, sampleCount);
-                if (error >= 0)
-                {
-                    result = true;
-                }
-                else
-                {
-                    alsa_set_error(device, error, "Still can't write after a resume: ");
-                }
-            }
-            else
-            {
-                alsa_set_error(device, error, "PCM prepare failed after a suspend: ");
-            }
-        }
-        else
-        {
-            alsa_set_error(device, error, "PCM resume failed after a suspend: ");
-        }
-    }
-    else
-    {
-        alsa_set_error(device, error, "Sound write failed: ");
-    }
-    
     return result;
 }
 
-internal PLATFORM_SOUND_WRITE_S16(platform_sound_write_s16)
+internal PLATFORM_SOUND_WRITE(linux_sound_write)
 {
     b32 result = false;
     
     if (device->platform)
     {
         AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
+        
+#if 0        
+        s16 *buffer = alsaDev->sampleBuffer;
+        switch (device->format)
+        {
+            case SoundFormat_s16:
+            {
+                buffer = (s16 *)samples;
+            } break;
+            
+            case SoundFormat_s32:
+            {
+                u32 sampleCount = device->sampleCount * device->channelCount;
+                s32 *source = (s32 *)samples;
+                // TODO(michiel): Dither
+                for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+                {
+                    alsaDev->sampleBuffer[sampleIdx] = source[sampleIdx] >> 16;
+                }
+            } break;
+            
+            case SoundFormat_f32:
+            {
+                u32 sampleCount = device->sampleCount * device->channelCount;
+                f32 *source = (f32 *)samples;
+                // TODO(michiel): Dither
+                for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+                {
+                    alsaDev->sampleBuffer[sampleIdx] = s16_from_f32_round(S16_MAX * source[sampleIdx]);
+                }
+            } break;
+            
+            INVALID_DEFAULT_CASE;
+        }
+#endif
+        
         result = linux_alsa_write(alsaDev, device->sampleCount, samples);
-    }
-    
-    return result;
-}
-
-internal PLATFORM_SOUND_WRITE_S32(platform_sound_write_s32)
-{
-    b32 result = false;
-    
-    if (device->platform)
-    {
-        AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
-        
-        u32 sampleCount = device->sampleCount * device->channelCount;
-        // TODO(michiel): Dither
-        for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
-        {
-            alsaDev->sampleBuffer[sampleIdx] = samples[sampleIdx] >> 16;
-        }
-        
-        result = linux_alsa_write(alsaDev, device->sampleCount, alsaDev->sampleBuffer);
-    }
-    
-    return result;
-}
-
-internal PLATFORM_SOUND_WRITE_F32(platform_sound_write_f32)
-{
-    b32 result = false;
-    
-    if (device->platform)
-    {
-        AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
-        
-        u32 sampleCount = device->sampleCount * device->channelCount;
-        // TODO(michiel): Dither
-        for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
-        {
-            alsaDev->sampleBuffer[sampleIdx] = s16_from_f32_round(S16_MAX * samples[sampleIdx]);
-        }
-        
-        result = linux_alsa_write(alsaDev, device->sampleCount, alsaDev->sampleBuffer);
     }
     
     return result;
