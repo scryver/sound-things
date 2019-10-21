@@ -15,6 +15,13 @@ struct RiffChunk
     u32 size;
 };
 
+struct RiffHeader
+{
+    u32 magic;
+    u32 size;
+    u32 fileType;
+};
+
 struct WavFormat
 {
     u32 magic;
@@ -49,3 +56,25 @@ struct WavData
 };
 
 #pragma pack(pop)
+
+struct WavReader
+{
+    ApiFile file;
+    
+    u32 channelCount;
+    u32 sampleFrequency;
+    u32 sampleResolution;
+    u32 sampleFrameSize;  // NOTE(michiel): Size of a single sample frame (so 1 sample for all channels)
+    WavFormatType format;
+    
+    u32 dataFileOffset; // NOTE(michiel): Start of data chunk in file
+    u32 dataCount;      // NOTE(michiel): Number of bytes total
+    u32 dataOffset;     // NOTE(michiel): Current offset in file, updated while reading
+};
+
+// NOTE(michiel): Opens a wav file for streaming input
+internal WavReader wav_open_stream(String filename);
+// NOTE(michiel): Stream from wav file
+// `output` should be set to the max read size and a valid data pointer.
+// Returns `true` on successful read.
+internal b32 wav_read_stream(WavReader *reader, Buffer *output);

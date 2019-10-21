@@ -1,3 +1,159 @@
+internal WavReader
+wav_open_stream(String filename)
+{
+    WavReader result = {};
+    
+    result.file = api.file.open_file(filename, FileOpen_Read);
+    
+    if (result.file.fileSize)
+    {
+        RiffHeader header = {};
+        umm fileOffset = 0;
+        umm bytesRead = api.file.read_from_file(&result.file,
+                                                sizeof(RiffHeader), &header);
+        
+        if (bytesRead == sizeof(RiffHeader))
+        {
+            if (header.magic == MAKE_MAGIC('R', 'I', 'F', 'F'))
+            {
+                fileOffset += sizeof(RiffHeader);
+                if ((header.size + sizeof(RiffChunk)) == result.file.fileSize)
+                {
+                    if (header.fileType == MAKE_MAGIC('W', 'A', 'V', 'E'))
+                    {
+                        while (fileOffset < result.file.fileSize)
+                        {
+                            RiffChunk chunk;
+                            bytesRead = api.file.read_from_file(&result.file,
+                                                                sizeof(RiffChunk), &chunk);
+                            if (bytesRead == sizeof(RiffChunk))
+                            {
+                                fileOffset += sizeof(RiffChunk);
+                                
+                                switch (chunk.magic)
+                                {
+                                    case MAKE_MAGIC('f', 'm', 't', ' '):
+                                    {
+                                        u32 bytesToRead = minimum(chunk.size, sizeof(WavFormat) - sizeof(RiffChunk));
+                                        WavFormat format = {};
+                                        format.magic = chunk.magic;
+                                        format.chunkSize = chunk.size;
+                                        bytesRead = api.file.read_from_file(&result.file,
+                                                                            bytesToRead,
+                                                                            ((u8 *)&format) + sizeof(RiffChunk));
+                                        if (bytesRead == bytesToRead)
+                                        {
+                                            result.channelCount = format.channelCount;
+                                            result.sampleFrequency = format.sampleRate;
+                                            result.sampleResolution = format.sampleSize;
+                                            result.sampleFrameSize = format.blockAlign;
+                                            result.format = (WavFormatType)format.formatCode;
+                                            if ((format.chunkSize > 16) && format.extensionCount)
+                                            {
+                                                result.format = (WavFormatType)*(u16 *)format.subFormat;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // TODO(michiel): Failed to read all of the fmt
+                                        }
+                                        
+                                        fileOffset += bytesRead;
+                                    } break;
+                                    
+                                    case MAKE_MAGIC('d', 'a', 't', 'a'):
+                                    {
+                                        result.dataFileOffset = fileOffset;
+                                        result.dataCount = chunk.size;
+                                        result.dataOffset = fileOffset;
+                                        
+                                        if (result.sampleFrequency)
+                                        {
+                                            // NOTE(michiel): Break the search loop, we have all the info
+                                            fileOffset = result.file.fileSize;
+                                        }
+                                        else
+                                        {
+                                            fileOffset += chunk.size;
+                                            api.file.set_file_position(&result.file, fileOffset, FileCursor_StartOfFile);
+                                        }
+                                    } break;
+                                    
+                                    default:
+                                    {
+                                        // TODO(michiel): Unsupported
+                                    } break;
+                                }
+                            }
+                            else
+                            {
+                                // TODO(michiel): Can't read chunk header
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // TODO(michiel): Invalid wave header
+                    }
+                }
+                else
+                {
+                    // TODO(michiel): Invalid file size in header
+                }
+            }
+            else
+            {
+                // TODO(michiel): Invalid file header
+            }
+        }
+        else
+        {
+            // TODO(michiel): Can't read file header
+        }
+    }
+    else
+    {
+        // TODO(michiel): Can't open file
+    }
+    
+    return result;
+}
+
+internal b32
+wav_read_stream(WavReader *reader, Buffer *output)
+{
+    i_expect(output->size);
+    i_expect(output->data);
+    
+    b32 result = false;
+    
+    u32 readSize = output->size;
+    if ((reader->dataOffset + readSize) > (reader->dataFileOffset + reader->dataCount))
+    {
+        readSize = reader->dataFileOffset + reader->dataCount - reader->dataOffset;
+    }
+    
+    if (readSize)
+    {
+        api.file.set_file_position(&reader->file, reader->dataOffset, FileCursor_StartOfFile);
+        u32 bytesRead = api.file.read_from_file(&reader->file, readSize, output->data);
+        if (bytesRead == readSize)
+        {
+            reader->dataOffset += bytesRead;
+            result = true;
+        }
+        else
+        {
+            readSize = 0;
+        }
+    }
+    
+    output->size = readSize;
+    
+    return result;
+}
+
 internal void
 print_format(WavFormat *format)
 {
