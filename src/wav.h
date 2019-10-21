@@ -57,24 +57,44 @@ struct WavData
 
 #pragma pack(pop)
 
-struct WavReader
+struct WavSettings
 {
-    ApiFile file;
-    
     u32 channelCount;
     u32 sampleFrequency;
     u32 sampleResolution;
     u32 sampleFrameSize;  // NOTE(michiel): Size of a single sample frame (so 1 sample for all channels)
     WavFormatType format;
+};
+
+struct WavStreamer
+{
+    ApiFile file;
+    
+    WavSettings settings;
     
     u32 dataFileOffset; // NOTE(michiel): Start of data chunk in file
-    u32 dataCount;      // NOTE(michiel): Number of bytes total
+    u32 dataCount;      // NOTE(michiel): Number of data bytes total
     u32 dataOffset;     // NOTE(michiel): Current offset in file, updated while reading
 };
 
+struct WavReader
+{
+    Buffer rawData;
+    WavSettings settings;
+    
+    u32 dataOffset; // NOTE(michiel): Start of data in rawData
+    u32 dataCount;  // NOTE(michiel): Number of data bytes total
+    u32 readOffset; // NOTE(michiel): Current offset in rawData starting at dataOffset
+};
+
 // NOTE(michiel): Opens a wav file for streaming input
-internal WavReader wav_open_stream(String filename);
+internal WavStreamer wav_open_stream(String filename);
 // NOTE(michiel): Stream from wav file
 // `output` should be set to the max read size and a valid data pointer.
 // Returns `true` on successful read.
-internal b32 wav_read_stream(WavReader *reader, Buffer *output);
+internal b32 wav_read_stream(WavStreamer *streamer, Buffer *output);
+
+// TODO(michiel): Memory allocator
+internal WavReader wav_load_file(String filename);
+internal Buffer wav_read_chunk(WavReader *reader, u32 byteCount);
+

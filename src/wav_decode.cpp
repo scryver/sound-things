@@ -66,22 +66,26 @@ s32 main(s32 argc, char **argv)
 {
     linux_file_api(&api.file);
     
-    WavReader reader = wav_open_stream(static_string("data/PinkFloyd-EmptySpaces.wav"));
-    
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
     
-    if (reader.sampleFrequency)
+    //
+    // NOTE(michiel): Streaming from file directly
+    //
+    
+    WavStreamer streamer = wav_open_stream(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    
+    if (streamer.settings.sampleFrequency)
     {
-        soundDev->sampleFrequency = reader.sampleFrequency;
+        soundDev->sampleFrequency = streamer.settings.sampleFrequency;
         soundDev->sampleCount = 4096;
-        soundDev->channelCount = reader.channelCount;
+        soundDev->channelCount = streamer.settings.channelCount;
         
-        switch (reader.format)
+        switch (streamer.settings.format)
         {
             case WavFormat_PCM:
             {
-                switch (reader.sampleResolution)
+                switch (streamer.settings.sampleResolution)
                 {
                     case 8:  { soundDev->format = SoundFormat_s8; } break;
                     case 16: { soundDev->format = SoundFormat_s16; } break;
@@ -93,7 +97,7 @@ s32 main(s32 argc, char **argv)
             
             case WavFormat_Float:
             {
-                switch (reader.sampleResolution)
+                switch (streamer.settings.sampleResolution)
                 {
                     case 32: { soundDev->format = SoundFormat_f32; } break;
                     case 64: { soundDev->format = SoundFormat_f64; } break;
@@ -106,16 +110,82 @@ s32 main(s32 argc, char **argv)
         
         if (platform_sound_init(soundDev))
         {
-            u32 maxSize = soundDev->sampleCount * reader.sampleFrameSize;
+            u32 maxSize = soundDev->sampleCount * streamer.settings.sampleFrameSize;
             u8 *readBlock = allocate_array(u8, maxSize);
             
             Buffer readBuffer = {maxSize, readBlock};
-            while (wav_read_stream(&reader, &readBuffer))
+            while (wav_read_stream(&streamer, &readBuffer))
             {
-                soundDev->sampleCount = readBuffer.size / reader.sampleFrameSize;
+                soundDev->sampleCount = readBuffer.size / streamer.settings.sampleFrameSize;
                 if (platform_sound_write(soundDev, readBuffer.data))
                 {
                     readBuffer = {maxSize, readBlock};
+                }
+                else
+                {
+                    // TODO(michiel): Sound write error
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // TODO(michiel): Error opening sound device
+        }
+    }
+    else
+    {
+        // TODO(michiel): Failed opening wav
+    }
+    
+    //
+    // NOTE(michiel): Read all into memory and go from there
+    WavReader reader = wav_load_file(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    
+    if (reader.settings.sampleFrequency)
+    {
+        soundDev->sampleFrequency = reader.settings.sampleFrequency;
+        soundDev->sampleCount = 4096;
+        soundDev->channelCount = reader.settings.channelCount;
+        
+        switch (reader.settings.format)
+        {
+            case WavFormat_PCM:
+            {
+                switch (reader.settings.sampleResolution)
+                {
+                    case 8:  { soundDev->format = SoundFormat_s8; } break;
+                    case 16: { soundDev->format = SoundFormat_s16; } break;
+                    case 24: { soundDev->format = SoundFormat_s24; } break;
+                    case 32: { soundDev->format = SoundFormat_s32; } break;
+                    INVALID_DEFAULT_CASE;
+                }
+            } break;
+            
+            case WavFormat_Float:
+            {
+                switch (reader.settings.sampleResolution)
+                {
+                    case 32: { soundDev->format = SoundFormat_f32; } break;
+                    case 64: { soundDev->format = SoundFormat_f64; } break;
+                    INVALID_DEFAULT_CASE;
+                }
+            } break;
+            
+            INVALID_DEFAULT_CASE;
+        }
+        
+        if (platform_sound_init(soundDev))
+        {
+            u32 maxSize = soundDev->sampleCount * reader.settings.sampleFrameSize;
+            
+            Buffer readBuffer = wav_read_chunk(&reader, maxSize);
+            while (readBuffer.size)
+            {
+                soundDev->sampleCount = readBuffer.size / reader.settings.sampleFrameSize;
+                if (platform_sound_write(soundDev, readBuffer.data))
+                {
+                    readBuffer = wav_read_chunk(&reader, maxSize);
                 }
                 else
                 {
