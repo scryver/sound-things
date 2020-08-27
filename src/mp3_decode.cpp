@@ -232,6 +232,14 @@ int main(int argc, char **argv)
                     u8 *endP = startP + frameSize;
                     while (startP < endP)
                     {
+                        if (((startP[0] == 0xFF) &&
+                             (startP[1] == 0xFE)) ||
+                            ((startP[0] == 0xFE) &&
+                             (startP[1] == 0xFF)))
+                        {
+                            startP += 2;
+                        }
+                        
                         String what = string((char *)startP);
                         startP += what.size + 1;
                         String who = string((char *)startP);
@@ -384,6 +392,13 @@ int main(int argc, char **argv)
                 if (src - startSearch)
                 {
                     fprintf(stderr, "Skipped%s %lu bytes searching for sync.\n", frameNr == 0 ? " first" : "", src - startSearch);
+                    
+                    fprintf(stderr, "Bytes:\n");
+                    for (u32 skipIdx = 0; skipIdx < (src - startSearch); ++skipIdx)
+                    {
+                        fprintf(stderr, "%02X", startSearch[skipIdx]);
+                    }
+                    fprintf(stderr, "\nString:\n%.*s\n", (s32)(src - startSearch), (char *)startSearch);
                 }
                 
                 u32 frameHeader = *(u32 *)src;
@@ -465,6 +480,10 @@ int main(int argc, char **argv)
                     
                     INVALID_DEFAULT_CASE;
                 }
+                if (bitRate == 0)
+                {
+                    fprintf(stderr, "Unsupported variable bitrate!\n");
+                }
                 
                 u8 sampleRateIdx = (frameHeader >> 10) & 0x3;
                 if (sampleRateIdx == 0x3)
@@ -534,7 +553,15 @@ int main(int argc, char **argv)
                     // NOTE(michiel): Invalid frame
                     fprintf(stderr, "Too few bytes remaining in the frame (%lu from the %u), resyncing!\n",
                             end - src, frameByteCount);
-                    ++src;
+                    
+                    fprintf(stderr, "Bytes:\n");
+                    for (u32 skipIdx = 0; skipIdx < (end - src); ++skipIdx)
+                    {
+                        fprintf(stderr, "%02X", src[skipIdx]);
+                    }
+                    fprintf(stderr, "\nString:\n%.*s\n", (s32)(end - src), (char *)src);
+                    
+                    src = end;
                     continue;
                 }
                 
@@ -546,9 +573,7 @@ int main(int argc, char **argv)
                     modeExtension = (frameHeader >> 4) & 0x3; // NOTE(michiel): For joint-stereo only
                 }
                 
-                b32 copyrighted = frameHeader & (1 << 3);
                 
-                b8 original = (frameHeader >> 2) & 0x1;
                 MpegEmphasis emphasis = (MpegEmphasis)(frameHeader & 0x3);
                 if (emphasis == MpegEmphasis_Reserved)
                 {
@@ -558,7 +583,10 @@ int main(int argc, char **argv)
                     continue;
                 }
                 
-#if 1
+#if 0
+                b32 copyrighted = frameHeader & (1 << 3);
+                b32 original = frameHeader & (1 << 2);
+                
                 fprintf(stdout, "Data frame %u: 0x%04X\n", frameNr + 1, frameSync);
                 switch (versionLayer)
                 {
@@ -600,11 +628,23 @@ int main(int argc, char **argv)
                 fprintf(stdout, "%s, %s, emphasis: %s\n", copyrighted ? "copyright" : "copyleft", original ? "original" : "fake", emphasisName);
 #endif
                 
+                u8 *startOfSideInfo = src + 4;
                 if (protection)
                 {
                     u16 crc = (src[4] << 8) | src[5];
                     unused(crc);
+                    startOfSideInfo += 2;
                 }
+                
+                Buffer sideInfo = {32, startOfSideInfo};
+                if (channelMode == MpegChannel_SingleChannel)
+                {
+                    sideInfo.size = 17;
+                }
+                s32 offset = *sideInfo.data;
+                offset = (offset << 1) | ((sideInfo.data[1] & 0x80) >> 7);
+                offset = -offset;
+                fprintf(stdout, "Offset: %d\n", offset);
                 
                 src += frameByteCount;
                 lastSearch = src;

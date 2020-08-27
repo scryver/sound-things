@@ -1,4 +1,6 @@
 #include "../libberdip/platform.h"
+#include "../libberdip/bitstreamer.h"
+#include "../libberdip/random.h"
 
 #include <alsa/asoundlib.h>
 
@@ -16,8 +18,10 @@
 #include "../libberdip/std_file.c"
 #include "../libberdip/crc.cpp"
 
-#include "bitstreamer.cpp"
+#include "../libberdip/bitstreamer.cpp"
 #include "flac.cpp"
+
+#include "truncation.cpp"
 
 internal s32
 get_signed32_left(BitStreamer *bitStream, u32 bitCount)
@@ -233,6 +237,47 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
     }
 }
 
+internal void
+do_stupid_float_thing(RandomSeriesPCG *series, u32 sampleCount, s32 *samples)
+{
+    for (u32 index = 0; index < sampleCount; ++index)
+    {
+        s32 left  = samples[index * 2 + 0] >> 8;
+        s32 right = samples[index * 2 + 1] >> 8;
+        
+        f32 lf32 = f32_from_s24(left);
+        f32 rf32 = f32_from_s24(right);
+        
+        s32 ldith = s24_from_f32_dtpdf(series, lf32);
+        s32 rdith = s24_from_f32_dtpdf(series, rf32);
+        
+        //s32 ldith = s24_from_f32_truncated(lf32);
+        //s32 rdith = s24_from_f32_truncated(rf32);
+        
+        //s32 ldith = left;
+        //s32 rdith = right;
+        
+        samples[index * 2 + 0] = ldith << 8;
+        samples[index * 2 + 1] = rdith << 8;
+    }
+}
+
+internal void
+f32_the_floats(u32 sampleCount, s32 *samplesIn, f32 *samplesOut)
+{
+    for (u32 index = 0; index < sampleCount; ++index)
+    {
+        s32 left  = samplesIn[index * 2 + 0];
+        s32 right = samplesIn[index * 2 + 1];
+        
+        f32 lf32 = f32_from_s24(left >> 8);
+        f32 rf32 = f32_from_s24(right >> 8);
+        
+        samplesOut[index * 2 + 0] = lf32;
+        samplesOut[index * 2 + 1] = rf32;
+    }
+}
+
 PlatformSoundErrorString *platform_sound_error_string = linux_sound_error_string;
 PlatformSoundInit *platform_sound_init = linux_sound_init;
 PlatformSoundWrite *platform_sound_write = linux_sound_write;
@@ -242,11 +287,8 @@ int main(int argc, char **argv)
     Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
     //Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
     
-    BitStreamer bitStream_ = {};
+    BitStreamer bitStream_ = create_bitstreamer(flacData, BitStream_BigEndian);
     BitStreamer *bitStream = &bitStream_;
-    bitStream->kind = BitStream_BigEndian;
-    bitStream->at = flacData.data;
-    bitStream->end = flacData.data + flacData.size;
     
     b32 isFlacFile = is_flac_file(bitStream);
     i_expect(isFlacFile);
@@ -311,7 +353,8 @@ int main(int argc, char **argv)
             {
                 // TODO(michiel): Handle switch to little endian...
                 u32 vendorSize = get_le_u32(bitStream);
-                metadata->vorbisComments.vendor = copy_to_string(bitStream, vendorSize);
+                u8 *vendorData = (u8 *)allocate_size(vendorSize);
+                metadata->vorbisComments.vendor = copy_to_string(bitStream, vendorSize, vendorData);
                 
                 metadata->vorbisComments.commentCount = get_le_u32(bitStream);
                 metadata->vorbisComments.comments =
@@ -322,7 +365,8 @@ int main(int argc, char **argv)
                     String *comment = metadata->vorbisComments.comments + i;
                     
                     u32 commentSize = get_le_u32(bitStream);
-                    *comment = copy_to_string(bitStream, commentSize);
+                    u8 *commentData = (u8 *)allocate_size(commentSize);
+                    *comment = copy_to_string(bitStream, commentSize, commentData);
                 }
             } break;
             
@@ -336,10 +380,12 @@ int main(int argc, char **argv)
                 metadata->picture.type = (FlacPictureType)get_bits(bitStream, 32);
                 
                 u32 mimeSize = get_bits(bitStream, 32);
-                metadata->picture.mime = copy_to_string(bitStream, mimeSize);
+                u8 *mimeData = (u8 *)allocate_size(mimeSize);
+                metadata->picture.mime = copy_to_string(bitStream, mimeSize, mimeData);
                 
                 u32 descSize = get_bits(bitStream, 32);
-                metadata->picture.description = copy_to_string(bitStream, descSize);
+                u8 *descData = (u8 *)allocate_size(descSize);
+                metadata->picture.description = copy_to_string(bitStream, descSize, descData);
                 
                 metadata->picture.width = get_bits(bitStream, 32);
                 metadata->picture.height = get_bits(bitStream, 32);
@@ -347,7 +393,8 @@ int main(int argc, char **argv)
                 metadata->picture.indexedColours = get_bits(bitStream, 32);
                 
                 u32 imageSize = get_bits(bitStream, 32);
-                metadata->picture.image = copy_to_bytes(bitStream, imageSize);
+                u8 *imageData = (u8 *)allocate_size(imageSize);
+                metadata->picture.image = copy_to_bytes(bitStream, imageSize, imageData);
             } break;
             
             case FlacMetadata_Invalid:
@@ -479,6 +526,8 @@ int main(int argc, char **argv)
     u32 totalSampleCount = (u32)info->maxBlockSamples * info->channelCount;
     s32 *testSamples1 = allocate_array(s32, totalSampleCount);
     s32 *testSamples2 = allocate_array(s32, totalSampleCount);
+    f32 *testSamplesF = allocate_array(f32, totalSampleCount);
+    unused(testSamplesF);
     
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
@@ -486,6 +535,9 @@ int main(int argc, char **argv)
     soundDev->sampleCount = info->maxBlockSamples;
     soundDev->channelCount = info->channelCount;
     soundDev->format = SoundFormat_s32;
+    
+    RandomSeriesPCG random = random_seed_pcg(102947602914ULL, 108926451051924ULL);
+    unused(random);
     
     if (platform_sound_init(soundDev))
     {
@@ -600,8 +652,11 @@ int main(int argc, char **argv)
             i_expect(crcFile == crcCheck);
             
             interleave_samples(frameHeader.channelAssignment, frameHeader.blockSize, testSamples1, testSamples2);
+            do_stupid_float_thing(&random, frameHeader.blockSize, testSamples2);
+            //f32_the_floats(frameHeader.blockSize, testSamples2, testSamplesF);
             soundDev->sampleCount = frameHeader.blockSize;
             if (platform_sound_write(soundDev, testSamples2))
+                //if (platform_sound_write(soundDev, testSamplesF))
             {
                 // NOTE(michiel): Fine
             }
