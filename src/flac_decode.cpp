@@ -1,6 +1,6 @@
 #include "../libberdip/platform.h"
 #include "../libberdip/bitstreamer.h"
-#include "../libberdip/random.h"
+#include "../libberdip/random.h"  // TODO(michiel): TEMP
 
 #include <alsa/asoundlib.h>
 
@@ -21,7 +21,7 @@
 #include "../libberdip/bitstreamer.cpp"
 #include "flac.cpp"
 
-#include "truncation.cpp"
+#include "truncation.cpp"  // TODO(michiel): TEMP
 
 internal s32
 get_signed32_left(BitStreamer *bitStream, u32 bitCount)
@@ -47,7 +47,8 @@ process_constant(BitStreamer *bitStream, u32 bitsPerSample,
                  u32 blockCount, s32 *samples)
 {
     // NOTE(michiel): expects samples[blockCount]
-    s32 constant = get_signed32_left(bitStream, bitsPerSample);
+    //s32 constant = get_signed32_left(bitStream, bitsPerSample);
+    s32 constant = get_signed32(bitStream, bitsPerSample);
     s32 *dst = samples;
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
@@ -63,7 +64,8 @@ process_verbatim(BitStreamer *bitStream, u32 bitsPerSample,
     s32 *dst = samples;
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
-        s32 source = get_signed32_left(bitStream, bitsPerSample);
+        //s32 source = get_signed32_left(bitStream, bitsPerSample);
+        s32 source = get_signed32(bitStream, bitsPerSample);
         *dst++ = source;
     }
 }
@@ -130,10 +132,12 @@ process_fixed(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
         INVALID_DEFAULT_CASE;
     }
     
+#if 0    
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
         samples[blockIdx] = samples[blockIdx] << (32 - bitsPerSample);
     }
+#endif
 }
 
 internal void
@@ -170,14 +174,16 @@ process_lpc(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
         samples[blockIdx] = *res++ + (s32)(value >> quantize);
     }
     
+#if 0    
     for (u32 blockIdx = 0; blockIdx < blockCount; ++blockIdx)
     {
         samples[blockIdx] = samples[blockIdx] << (32 - bitsPerSample);
     }
+#endif
 }
 
 internal void
-interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *samplesOut)
+interleave_samples(u32 channelAssignment, u32 bitsPerSample, u32 sampleCount, s32 *samplesIn, s32 *samplesOut)
 {
     if (channelAssignment > FlacChannel_FrontLRCSubBackLRSideLR)
     {
@@ -191,8 +197,10 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
                     s32 left = samplesIn[sampleIdx];
                     s32 diff = samplesIn[sampleIdx + sampleCount];
                     
+                    //samplesOut[sampleIdx * 2 + 0] = left;
+                    //samplesOut[sampleIdx * 2 + 1] = ((left >> 1) - diff) << 1;
                     samplesOut[sampleIdx * 2 + 0] = left;
-                    samplesOut[sampleIdx * 2 + 1] = ((left >> 1) - diff) << 1;
+                    samplesOut[sampleIdx * 2 + 1] = left - diff;
                 }
             } break;
             
@@ -203,7 +211,10 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
                     s32 diff  = samplesIn[sampleIdx];
                     s32 right = samplesIn[sampleIdx + sampleCount];
                     
-                    samplesOut[sampleIdx * 2 + 0] = ((right >> 1) - diff) << 1;
+                    //samplesOut[sampleIdx * 2 + 0] = ((right >> 1) - diff) << 1;
+                    //samplesOut[sampleIdx * 2 + 1] = right;
+                    
+                    samplesOut[sampleIdx * 2 + 0] = right + diff;
                     samplesOut[sampleIdx * 2 + 1] = right;
                 }
             } break;
@@ -215,8 +226,13 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
                     s32 mid  = samplesIn[sampleIdx];
                     s32 side = samplesIn[sampleIdx + sampleCount];
                     
-                    samplesOut[sampleIdx * 2 + 0] = mid + (side >> 1);
-                    samplesOut[sampleIdx * 2 + 1] = mid - (side >> 1);
+                    //samplesOut[sampleIdx * 2 + 0] = mid + (side >> 1);
+                    //samplesOut[sampleIdx * 2 + 1] = mid - (side >> 1);
+                    
+                    mid = ((u32)mid) << 1;
+                    mid |= (side & 0x01); // NOTE(michiel): Is side odd
+                    samplesOut[sampleIdx * 2 + 0] = (mid + side) >> 1;
+                    samplesOut[sampleIdx * 2 + 1] = (mid - side) >> 1;
                 }
             } break;
             
@@ -235,9 +251,14 @@ interleave_samples(u32 channelAssignment, u32 sampleCount, s32 *samplesIn, s32 *
             }
         }
     }
+    for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
+    {
+        samplesOut[sampleIdx * 2 + 0] = (samplesOut[sampleIdx * 2 + 0]) << (32 - bitsPerSample);
+        samplesOut[sampleIdx * 2 + 1] = (samplesOut[sampleIdx * 2 + 1]) << (32 - bitsPerSample);
+    }
 }
 
-internal void
+internal void // TODO(michiel): TEMP
 do_stupid_float_thing(RandomSeriesPCG *series, u32 sampleCount, s32 *samples)
 {
     for (u32 index = 0; index < sampleCount; ++index)
@@ -262,7 +283,7 @@ do_stupid_float_thing(RandomSeriesPCG *series, u32 sampleCount, s32 *samples)
     }
 }
 
-internal void
+internal void // TODO(michiel): TEMP
 f32_the_floats(u32 sampleCount, s32 *samplesIn, f32 *samplesOut)
 {
     for (u32 index = 0; index < sampleCount; ++index)
@@ -526,7 +547,7 @@ int main(int argc, char **argv)
     u32 totalSampleCount = (u32)info->maxBlockSamples * info->channelCount;
     s32 *testSamples1 = allocate_array(s32, totalSampleCount);
     s32 *testSamples2 = allocate_array(s32, totalSampleCount);
-    f32 *testSamplesF = allocate_array(f32, totalSampleCount);
+    f32 *testSamplesF = allocate_array(f32, totalSampleCount); // TODO(michiel): TEMP
     unused(testSamplesF);
     
     SoundDevice soundDev_ = {};
@@ -536,7 +557,7 @@ int main(int argc, char **argv)
     soundDev->channelCount = info->channelCount;
     soundDev->format = SoundFormat_s32;
     
-    RandomSeriesPCG random = random_seed_pcg(102947602914ULL, 108926451051924ULL);
+    RandomSeriesPCG random = random_seed_pcg(102947602914ULL, 108926451051924ULL); // TODO(michiel): TEMP
     unused(random);
     
     if (platform_sound_init(soundDev))
@@ -651,12 +672,12 @@ int main(int argc, char **argv)
             }
             i_expect(crcFile == crcCheck);
             
-            interleave_samples(frameHeader.channelAssignment, frameHeader.blockSize, testSamples1, testSamples2);
-            do_stupid_float_thing(&random, frameHeader.blockSize, testSamples2);
-            //f32_the_floats(frameHeader.blockSize, testSamples2, testSamplesF);
+            interleave_samples(frameHeader.channelAssignment, frameHeader.bitsPerSample, frameHeader.blockSize, testSamples1, testSamples2);
+            do_stupid_float_thing(&random, frameHeader.blockSize, testSamples2); // TODO(michiel): TEMP
+            //f32_the_floats(frameHeader.blockSize, testSamples2, testSamplesF); // TODO(michiel): TEMP
             soundDev->sampleCount = frameHeader.blockSize;
             if (platform_sound_write(soundDev, testSamples2))
-                //if (platform_sound_write(soundDev, testSamplesF))
+                //if (platform_sound_write(soundDev, testSamplesF)) // TODO(michiel): TEMP
             {
                 // NOTE(michiel): Fine
             }
