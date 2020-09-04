@@ -17,7 +17,7 @@ global FileAPI gFileApi_;
 global FileAPI *gFileApi = &gFileApi_;
 
 #ifndef FLAC_DEBUG_LEVEL
-#define FLAC_DEBUG_LEVEL  1
+#define FLAC_DEBUG_LEVEL  0
 #endif
 
 #include "flac.h"
@@ -565,7 +565,7 @@ int main(int argc, char **argv)
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
     soundDev->sampleFrequency = info->sampleRate;
-    soundDev->sampleCount = info->maxBlockSamples;
+    soundDev->sampleCount = 512; // info->maxBlockSamples;
     soundDev->channelCount = info->channelCount;
     soundDev->format = SoundFormat_s32;
     
@@ -685,18 +685,32 @@ int main(int argc, char **argv)
             i_expect(crcFile == crcCheck);
             
             interleave_samples(frameHeader.channelAssignment, frameHeader.bitsPerSample, frameHeader.blockSize, testSamples1, testSamples2);
-            do_stupid_float_thing(&random, frameHeader.blockSize, testSamples2); // TODO(michiel): TEMP
+            //do_stupid_float_thing(&random, frameHeader.blockSize, testSamples2); // TODO(michiel): TEMP
             //f32_the_floats(frameHeader.blockSize, testSamples2, testSamplesF); // TODO(michiel): TEMP
-            soundDev->sampleCount = frameHeader.blockSize;
-            if (platform_sound_write(soundDev, testSamples2))
-                //if (platform_sound_write(soundDev, testSamplesF)) // TODO(michiel): TEMP
+            u32 totalCount = frameHeader.blockSize * soundDev->channelCount;
+            s32 *source = testSamples2;
+            u32 frameSize = soundDev->channelCount * soundDev->sampleCount;
+            while (totalCount >= frameSize)
             {
-                // NOTE(michiel): Fine
+                if (platform_sound_write(soundDev, source))
+                    //if (platform_sound_write(soundDev, testSamplesF)) // TODO(michiel): TEMP
+                {
+                    //fprintf(stderr, "A one frame\n");
+                    source += frameSize;
+                    totalCount -= frameSize;
+                }
+                else
+                {
+                    fprintf(stderr, "Sound write failed:\n    ");
+                    fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                    break;
+                }
             }
-            else
+            
+            if (totalCount)
             {
-                fprintf(stderr, "Sound write failed:\n    ");
-                fprintf(stderr, "%.*s\n\n", STR_FMT(platform_sound_error_string(soundDev)));
+                // NOTE(michiel): Was an error writing to device
+                fprintf(stderr, "Buffer is not a multiple of the sound period size\n");
                 break;
             }
         }

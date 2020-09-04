@@ -21,61 +21,69 @@ alsa_hardware_init(AlsaDevice *device, u32 sampleFrequency, u32 sampleCount, u32
         error = snd_pcm_hw_params_set_rate_resample(device->pcmHandle, device->hwParams, 0);
         if (error >= 0)
         {
-            switch (format)
-            {
-                case SoundFormat_s8:  { device->format = SND_PCM_FORMAT_S8; } break;
-                case SoundFormat_s16: { device->format = SND_PCM_FORMAT_S16_LE; } break;
-                case SoundFormat_s24: { device->format = SND_PCM_FORMAT_S24_3LE; } break;
-                case SoundFormat_s32: { device->format = SND_PCM_FORMAT_S32_LE; } break;
-                case SoundFormat_s64: { device->format = SND_PCM_FORMAT_S32_LE; } break;
-                case SoundFormat_f32: { device->format = SND_PCM_FORMAT_FLOAT_LE; } break;
-                case SoundFormat_f64: { device->format = SND_PCM_FORMAT_FLOAT64_LE; } break;
-                INVALID_DEFAULT_CASE;
-            }
-            
-            error = snd_pcm_hw_params_set_format(device->pcmHandle, device->hwParams, device->format);
+            error = snd_pcm_hw_params_set_access(device->pcmHandle, device->hwParams, SND_PCM_ACCESS_RW_INTERLEAVED);
             if (error >= 0)
             {
-                error = snd_pcm_hw_params_set_channels(device->pcmHandle, device->hwParams, channelCount);
+                switch (format)
+                {
+                    case SoundFormat_s8:  { device->format = SND_PCM_FORMAT_S8; } break;
+                    case SoundFormat_s16: { device->format = SND_PCM_FORMAT_S16_LE; } break;
+                    case SoundFormat_s24: { device->format = SND_PCM_FORMAT_S24_3LE; } break;
+                    case SoundFormat_s32: { device->format = SND_PCM_FORMAT_S32_LE; } break;
+                    case SoundFormat_s64: { device->format = SND_PCM_FORMAT_S32_LE; } break;
+                    case SoundFormat_f32: { device->format = SND_PCM_FORMAT_FLOAT_LE; } break;
+                    case SoundFormat_f64: { device->format = SND_PCM_FORMAT_FLOAT64_LE; } break;
+                    INVALID_DEFAULT_CASE;
+                }
+                
+                error = snd_pcm_hw_params_set_format(device->pcmHandle, device->hwParams, device->format);
                 if (error >= 0)
                 {
-                    error = snd_pcm_hw_params_set_rate(device->pcmHandle, device->hwParams, sampleFrequency, 0);
+                    error = snd_pcm_hw_params_set_channels(device->pcmHandle, device->hwParams, channelCount);
                     if (error >= 0)
                     {
-                        u32 totalPeriodCount = 4;
-                        u32 totalBufferSize = sampleCount * totalPeriodCount;
-                        
-                        error = snd_pcm_hw_params_set_buffer_size(device->pcmHandle, device->hwParams, totalBufferSize);
+                        error = snd_pcm_hw_params_set_rate(device->pcmHandle, device->hwParams, sampleFrequency, 0);
                         if (error >= 0)
                         {
-                            error = snd_pcm_hw_params_set_period_size(device->pcmHandle, device->hwParams, sampleCount, 0);
+                            u32 totalPeriodCount = 2;
+                            u32 totalBufferSize = sampleCount * totalPeriodCount;
+                            
+                            error = snd_pcm_hw_params_set_buffer_size(device->pcmHandle, device->hwParams, totalBufferSize);
                             if (error >= 0)
                             {
-                                result = true;
+                                error = snd_pcm_hw_params_set_period_size(device->pcmHandle, device->hwParams, sampleCount, 0);
+                                if (error >= 0)
+                                {
+                                    result = true;
+                                }
+                                else
+                                {
+                                    alsa_set_error(device, error, "Set period size failed: ");
+                                }
                             }
                             else
                             {
-                                alsa_set_error(device, error, "Set period size failed: ");
+                                alsa_set_error(device, error, "Set buffer size failed: ");
                             }
                         }
                         else
                         {
-                            alsa_set_error(device, error, "Set buffer size failed: ");
+                            alsa_set_error(device, error, "Set sample rate failed: ");
                         }
                     }
                     else
                     {
-                        alsa_set_error(device, error, "Set sample rate failed: ");
+                        alsa_set_error(device, error, "Set channels failed: ");
                     }
                 }
                 else
                 {
-                    alsa_set_error(device, error, "Set channels failed: ");
+                    alsa_set_error(device, error, "Set (%u) format failed: ", device->format);
                 }
             }
             else
             {
-                alsa_set_error(device, error, "Set S16_LE format failed: ");
+                alsa_set_error(device, error, "Could not set access to interleaved");
             }
         }
         else
@@ -227,7 +235,7 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
     s32 error = snd_output_stdio_attach(&alsaDev->stdout, stdout, 0);
     if (error >= 0)
     {
-        alsaDev->name = "default";
+        alsaDev->name = "hw:1,0";
         error = snd_pcm_hw_params_malloc(&alsaDev->hwParams);
         
         if (error >= 0)
@@ -374,7 +382,35 @@ internal PLATFORM_SOUND_WRITE(linux_sound_write)
         }
 #endif
         
+#if 0
+        u32 framesToWrite = device->sampleCount;
+        result = true;
+        u8 *source = (u8 *)samples;
+        u32 frameSize = device->channelCount;
+        switch (device->format)
+        {
+            case SoundFormat_s8 : {} break;
+            case SoundFormat_s16: { frameSize *= 2; } break;
+            case SoundFormat_s24: { frameSize *= 3; } break;
+            case SoundFormat_s32: { frameSize *= 4; } break;
+            case SoundFormat_s64: { frameSize *= 8; } break;
+            case SoundFormat_f32: { frameSize *= 4; } break;
+            case SoundFormat_f64: { frameSize *= 8; } break;
+            INVALID_DEFAULT_CASE;
+        }
+        while (result && (framesToWrite > 128))
+        {
+            result = linux_alsa_write(alsaDev, 128, source);
+            framesToWrite -= 128;
+            source += 128 * frameSize;
+        }
+        if (result && framesToWrite)
+        {
+            result = linux_alsa_write(alsaDev, framesToWrite, source);
+        }
+#else
         result = linux_alsa_write(alsaDev, device->sampleCount, samples);
+#endif
     }
     
     return result;
