@@ -1,11 +1,20 @@
 #include "../libberdip/platform.h"
+#include "../libberdip/linux_memory.h"
 
+#include <unistd.h>
+#include <sys/mman.h>
 #include <alsa/asoundlib.h>
 
 #include "./platform_sound.h"
 
 #include "./linux_sound.h"
 #include "./linux_sound.cpp"
+
+global API api;
+global MemoryAPI *gMemoryApi = &api.memory;
+
+#include "../libberdip/memory.cpp"
+#include "../libberdip/linux_memory.cpp"
 
 PlatformSoundErrorString *platform_sound_error_string = linux_sound_error_string;
 PlatformSoundInit *platform_sound_init = linux_sound_init;
@@ -14,6 +23,12 @@ PlatformSoundWrite *platform_sound_write = linux_sound_write;
 
 s32 main(s32 argc, char **argv)
 {
+    linux_memory_api(&api.memory);
+    //linux_file_api(&api.file);
+    
+    MemoryAllocator platformAlloc = {};
+    initialize_platform_allocator(0, &platformAlloc);
+    
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
     
@@ -21,7 +36,7 @@ s32 main(s32 argc, char **argv)
     soundDev->sampleCount = 4096;
     soundDev->channelCount = 2;
     
-    if (platform_sound_init(soundDev))
+    if (platform_sound_init(&platformAlloc, soundDev))
     {
         fprintf(stdout, "Opened sound device:\n");
         fprintf(stdout, "  sample freq   : %u\n", soundDev->sampleFrequency);
@@ -30,9 +45,9 @@ s32 main(s32 argc, char **argv)
         
         f32 frequency = 220.0f;
         f32 step = frequency / soundDev->sampleFrequency;
-        f32 *soundBufferF32 = allocate_array(f32, soundDev->sampleCount * soundDev->channelCount);
-        s32 *soundBufferS32 = allocate_array(s32, soundDev->sampleCount * soundDev->channelCount);
-        s16 *soundBufferS16 = allocate_array(s16, soundDev->sampleCount * soundDev->channelCount);
+        f32 *soundBufferF32 = allocate_array(&platformAlloc, f32, soundDev->sampleCount * soundDev->channelCount, default_memory_alloc());
+        s32 *soundBufferS32 = allocate_array(&platformAlloc, s32, soundDev->sampleCount * soundDev->channelCount, default_memory_alloc());
+        s16 *soundBufferS16 = allocate_array(&platformAlloc, s16, soundDev->sampleCount * soundDev->channelCount, default_memory_alloc());
         
         u32 stepsPerFormat = 128;
         f32 stepAt = 0.0f;

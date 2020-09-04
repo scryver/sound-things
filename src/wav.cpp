@@ -164,11 +164,11 @@ wav_read_stream(WavStreamer *streamer, Buffer *output)
 }
 
 internal WavReader
-wav_load_file(String filename)
+wav_load_file(MemoryAllocator *allocator, String filename)
 {
     WavReader result = {};
     
-    result.rawData = api.file.read_entire_file(filename);
+    result.rawData = api.file.read_entire_file(allocator, filename);
     if (result.rawData.size)
     {
         u8 *src = result.rawData.data;

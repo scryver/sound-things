@@ -1,6 +1,7 @@
 #include "../libberdip/platform.h"
 #include "../libberdip/bitstreamer.h"
 #include "../libberdip/random.h"  // TODO(michiel): TEMP
+#include "../libberdip/std_memory.h"
 
 #include <alsa/asoundlib.h>
 
@@ -9,12 +10,19 @@
 #include "./linux_sound.h"
 #include "./linux_sound.cpp"
 
+global MemoryAllocator gMemoryAllocator_;
+global MemoryAllocator *gMemoryAllocator = &gMemoryAllocator_;
+
+global FileAPI gFileApi_;
+global FileAPI *gFileApi = &gFileApi_;
+
 #ifndef FLAC_DEBUG_LEVEL
 #define FLAC_DEBUG_LEVEL  1
 #endif
 
 #include "flac.h"
 
+#include "../libberdip/std_memory.cpp"
 #include "../libberdip/std_file.c"
 #include "../libberdip/crc.cpp"
 
@@ -82,7 +90,7 @@ process_fixed(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
     
     Buffer residual;
     residual.size = (blockCount - order) * sizeof(s32);
-    residual.data = allocate_array(u8, residual.size);
+    residual.data = allocate_array(gMemoryAllocator, u8, residual.size, default_memory_alloc());
     parse_residual_coding(bitStream, order, blockCount, &residual);
     
     s32 *res = (s32 *)residual.data;
@@ -160,7 +168,7 @@ process_lpc(BitStreamer *bitStream, u32 order, u32 bitsPerSample,
     
     Buffer residual;
     residual.size = (blockCount - order) * sizeof(s32);
-    residual.data = allocate_array(u8, residual.size);
+    residual.data = allocate_array(gMemoryAllocator, u8, residual.size, default_memory_alloc());
     parse_residual_coding(bitStream, order, blockCount, &residual);
     
     s32 *res = (s32 *)residual.data;
@@ -251,6 +259,7 @@ interleave_samples(u32 channelAssignment, u32 bitsPerSample, u32 sampleCount, s3
             }
         }
     }
+    
     for (u32 sampleIdx = 0; sampleIdx < sampleCount; ++sampleIdx)
     {
         samplesOut[sampleIdx * 2 + 0] = (samplesOut[sampleIdx * 2 + 0]) << (32 - bitsPerSample);
@@ -305,7 +314,10 @@ PlatformSoundWrite *platform_sound_write = linux_sound_write;
 
 int main(int argc, char **argv)
 {
-    Buffer flacData = read_entire_file(static_string("data/PinkFloyd-EmptySpaces.flac"));
+    std_file_api(gFileApi);
+    initialize_std_allocator(0, gMemoryAllocator);
+    
+    Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/03 On the Run.flac"));
     //Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
     
     BitStreamer bitStream_ = create_bitstreamer(flacData, BitStream_BigEndian);
@@ -321,7 +333,7 @@ int main(int argc, char **argv)
     
     u32 maxMetadataEntries = 64;
     u32 metadataEntryCount = 0;
-    FlacMetadata *metadataEntries = allocate_array(FlacMetadata, maxMetadataEntries);
+    FlacMetadata *metadataEntries = allocate_array(gMemoryAllocator, FlacMetadata, maxMetadataEntries, default_memory_alloc());
     
     for(u32 index = 0; index < maxMetadataEntries; ++index)
     {
@@ -357,7 +369,7 @@ int main(int argc, char **argv)
                 i_expect((metadata->totalSize % 18) == 0);
                 
                 metadata->seekTable.entries =
-                    allocate_array(FlacSeekEntry, metadata->seekTable.count);
+                    allocate_array(gMemoryAllocator, FlacSeekEntry, metadata->seekTable.count, default_memory_alloc());
                 
                 for (u32 seekTableIndex = 0;
                      seekTableIndex < metadata->seekTable.count;
@@ -374,19 +386,19 @@ int main(int argc, char **argv)
             {
                 // TODO(michiel): Handle switch to little endian...
                 u32 vendorSize = get_le_u32(bitStream);
-                u8 *vendorData = (u8 *)allocate_size(vendorSize);
+                u8 *vendorData = (u8 *)allocate_size(gMemoryAllocator, vendorSize, default_memory_alloc());
                 metadata->vorbisComments.vendor = copy_to_string(bitStream, vendorSize, vendorData);
                 
                 metadata->vorbisComments.commentCount = get_le_u32(bitStream);
                 metadata->vorbisComments.comments =
-                    allocate_array(String, metadata->vorbisComments.commentCount);
+                    allocate_array(gMemoryAllocator, String, metadata->vorbisComments.commentCount, default_memory_alloc());
                 
                 for (u32 i = 0; i < metadata->vorbisComments.commentCount; ++i)
                 {
                     String *comment = metadata->vorbisComments.comments + i;
                     
                     u32 commentSize = get_le_u32(bitStream);
-                    u8 *commentData = (u8 *)allocate_size(commentSize);
+                    u8 *commentData = (u8 *)allocate_size(gMemoryAllocator, commentSize, default_memory_alloc());
                     *comment = copy_to_string(bitStream, commentSize, commentData);
                 }
             } break;
@@ -401,11 +413,11 @@ int main(int argc, char **argv)
                 metadata->picture.type = (FlacPictureType)get_bits(bitStream, 32);
                 
                 u32 mimeSize = get_bits(bitStream, 32);
-                u8 *mimeData = (u8 *)allocate_size(mimeSize);
+                u8 *mimeData = (u8 *)allocate_size(gMemoryAllocator, mimeSize, default_memory_alloc());
                 metadata->picture.mime = copy_to_string(bitStream, mimeSize, mimeData);
                 
                 u32 descSize = get_bits(bitStream, 32);
-                u8 *descData = (u8 *)allocate_size(descSize);
+                u8 *descData = (u8 *)allocate_size(gMemoryAllocator, descSize, default_memory_alloc());
                 metadata->picture.description = copy_to_string(bitStream, descSize, descData);
                 
                 metadata->picture.width = get_bits(bitStream, 32);
@@ -414,7 +426,7 @@ int main(int argc, char **argv)
                 metadata->picture.indexedColours = get_bits(bitStream, 32);
                 
                 u32 imageSize = get_bits(bitStream, 32);
-                u8 *imageData = (u8 *)allocate_size(imageSize);
+                u8 *imageData = (u8 *)allocate_size(gMemoryAllocator, imageSize, default_memory_alloc());
                 metadata->picture.image = copy_to_bytes(bitStream, imageSize, imageData);
             } break;
             
@@ -545,9 +557,9 @@ int main(int argc, char **argv)
     
     i_expect(info->minBlockSamples == info->maxBlockSamples);
     u32 totalSampleCount = (u32)info->maxBlockSamples * info->channelCount;
-    s32 *testSamples1 = allocate_array(s32, totalSampleCount);
-    s32 *testSamples2 = allocate_array(s32, totalSampleCount);
-    f32 *testSamplesF = allocate_array(f32, totalSampleCount); // TODO(michiel): TEMP
+    s32 *testSamples1 = allocate_array(gMemoryAllocator, s32, totalSampleCount, default_memory_alloc());
+    s32 *testSamples2 = allocate_array(gMemoryAllocator, s32, totalSampleCount, default_memory_alloc());
+    f32 *testSamplesF = allocate_array(gMemoryAllocator, f32, totalSampleCount, default_memory_alloc()); // TODO(michiel): TEMP
     unused(testSamplesF);
     
     SoundDevice soundDev_ = {};
@@ -560,7 +572,7 @@ int main(int argc, char **argv)
     RandomSeriesPCG random = random_seed_pcg(102947602914ULL, 108926451051924ULL); // TODO(michiel): TEMP
     unused(random);
     
-    if (platform_sound_init(soundDev))
+    if (platform_sound_init(gMemoryAllocator, soundDev))
     {
         while (bitStream->at != bitStream->end)
         {

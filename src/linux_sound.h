@@ -1,6 +1,8 @@
 
 struct AlsaDevice
 {
+    MemoryAllocator *allocator;
+    
     char *name;
     snd_pcm_t *pcmHandle;
     snd_pcm_hw_params_t *hwParams;

@@ -99,7 +99,7 @@ alsa_software_init(AlsaDevice *device, u32 sampleCount)
     s32 error = snd_pcm_sw_params_current(device->pcmHandle, device->swParams);
     if (error >= 0)
     {
-        error = snd_pcm_sw_params_set_start_threshold(device->pcmHandle, device->swParams, sampleCount);
+        error = snd_pcm_sw_params_set_start_threshold(device->pcmHandle, device->swParams, 2*sampleCount);
         if (error >= 0)
         {
             error = snd_pcm_sw_params_set_avail_min(device->pcmHandle, device->swParams, sampleCount);
@@ -217,10 +217,13 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
     
     if (!device->platform)
     {
-        device->platform = allocate_struct(AlsaDevice);
+        device->platform = allocate_struct(allocator, AlsaDevice, default_memory_alloc());
     }
     
     AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
+    i_expect(alsaDev);
+    alsaDev->allocator = allocator;
+    
     s32 error = snd_output_stdio_attach(&alsaDev->stdout, stdout, 0);
     if (error >= 0)
     {
@@ -309,21 +312,20 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
 
 internal PLATFORM_SOUND_REFORMAT(linux_sound_reformat)
 {
+    i_expect(device->platform);
+    
     b32 result = false;
     
-    if (device->platform)
-    {
-        AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
-        snd_pcm_drain(alsaDev->pcmHandle);
-        
-        snd_pcm_sw_params_free(alsaDev->swParams);
-        snd_pcm_close(alsaDev->pcmHandle);
-        snd_pcm_hw_params_free(alsaDev->hwParams);
-        
-        usleep(100000);
-    }
+    AlsaDevice *alsaDev = (AlsaDevice *)device->platform;
+    snd_pcm_drain(alsaDev->pcmHandle);
     
-    result = linux_sound_init(device);
+    snd_pcm_sw_params_free(alsaDev->swParams);
+    snd_pcm_close(alsaDev->pcmHandle);
+    snd_pcm_hw_params_free(alsaDev->hwParams);
+    
+    usleep(100000);
+    
+    result = linux_sound_init(alsaDev->allocator, device);
     
     return result;
 }

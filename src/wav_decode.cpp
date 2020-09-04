@@ -1,4 +1,5 @@
 #include "../libberdip/platform.h"
+#include "../libberdip/linux_memory.h"
 
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -12,33 +13,12 @@
 
 #include "wav.h"
 
-internal Buffer
-linux_allocate_size(umm size, u32 flags = 0)
-{
-    Buffer result = {};
-    result.data = (u8 *)malloc(size);
-    if (result.data)
-    {
-        result.size = size;
-    }
-    
-    if (!(flags & Alloc_NoClear))
-    {
-        copy_single(result.size, 0, result.data);
-    }
-    
-    return result;
-}
-
-internal void
-linux_deallocate_size(Buffer block)
-{
-    free(block.data);
-}
-
-#include "../libberdip/linux_file.c"
-
 global API api;
+global MemoryAPI *gMemoryApi = &api.memory;
+
+#include "../libberdip/memory.cpp"
+#include "../libberdip/linux_memory.cpp"
+#include "../libberdip/linux_file.c"
 
 #include "wav.cpp"
 
@@ -62,18 +42,26 @@ PlatformSoundErrorString *platform_sound_error_string = linux_sound_error_string
 PlatformSoundInit *platform_sound_init = linux_sound_init;
 PlatformSoundWrite *platform_sound_write = linux_sound_write;
 
+#if 0
 s32 main(s32 argc, char **argv)
 {
+    linux_memory_api(&api.memory);
     linux_file_api(&api.file);
     
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
     
+    String filename = static_string("data/PinkFloyd-EmptySpaces.wav");
+    if (argc == 2)
+    {
+        filename = string(argv[1]);
+    }
+    
     //
     // NOTE(michiel): Streaming from file directly
     //
     
-    WavStreamer streamer = wav_open_stream(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    WavStreamer streamer = wav_open_stream(filename);
     
     if (streamer.settings.sampleFrequency)
     {
@@ -140,7 +128,7 @@ s32 main(s32 argc, char **argv)
     
     //
     // NOTE(michiel): Read all into memory and go from there
-    WavReader reader = wav_load_file(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    WavReader reader = wav_load_file(filename);
     
     if (reader.settings.sampleFrequency)
     {
@@ -207,16 +195,30 @@ s32 main(s32 argc, char **argv)
     return 0;
 }
 
-#if 0
+#else
+
 s32 main(s32 argc, char **argv)
 {
+    linux_memory_api(&api.memory);
     linux_file_api(&api.file);
     
-    Buffer wavFile = api.file.read_entire_file(static_string("data/PinkFloyd-EmptySpaces.wav"));
+    MemoryAllocator platformAlloc = {};
+    initialize_platform_allocator(0, &platformAlloc);
+    
+    String filename = static_string("data/PinkFloyd-EmptySpaces.wav");
+    if (argc == 2)
+    {
+        filename = string(argv[1]);
+    }
+    
+    Buffer wavFile = api.file.read_entire_file(&platformAlloc, filename);
     //Buffer wavFile = read_entire_file(static_string("data/11 Info Dump.wav"));
     
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
+    
+    ApiFile newFile = api.file.open_file(static_string("wavnew.wav"), FileOpen_Write);
+    ApiFile rawFile = api.file.open_file(static_string("wav.raw"), FileOpen_Write);
     
     if (wavFile.size)
     {
@@ -224,12 +226,20 @@ s32 main(s32 argc, char **argv)
         RiffChunk *chunk = (RiffChunk *)srcPointer;
         srcPointer += sizeof(RiffChunk);
         
-        if (chunk->magic == MAKE_MAGIC('R', 'I', 'F', 'F'))
+        RiffChunk newChunk = *chunk;
+        newChunk.size -= 30 * 4;
+        api.file.write_to_file(&newFile, sizeof(RiffChunk), &newChunk);
+        
+        if ((chunk->magic == MAKE_MAGIC('R', 'I', 'F', 'F')) ||
+            (chunk->magic == MAKE_MAGIC('F', 'O', 'R', 'M')))
         {
             u32 totalByteCount = chunk->size;
             chunk = (RiffChunk *)srcPointer;
-            if (chunk->magic == MAKE_MAGIC('W', 'A', 'V', 'E'))
+            
+            if ((chunk->magic == MAKE_MAGIC('W', 'A', 'V', 'E')) ||
+                (chunk->magic == MAKE_MAGIC('A', 'I', 'F', 'F')))
             {
+                api.file.write_to_file(&newFile, 4, chunk);
                 srcPointer += 4;
                 fprintf(stdout, "Got one (%u)\n", totalByteCount);
                 WavFormat *format = 0;
@@ -245,6 +255,8 @@ s32 main(s32 argc, char **argv)
                         {
                             format = (WavFormat *)chunk;
                             srcPointer += format->chunkSize;
+                            
+                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + format->chunkSize, chunk);
                             
                             soundDev->sampleFrequency = format->sampleRate;
                             soundDev->sampleCount = 4096;
@@ -274,7 +286,7 @@ s32 main(s32 argc, char **argv)
                                 }
                             }
                             
-                            if (platform_sound_init(soundDev))
+                            if (platform_sound_init(&platformAlloc, soundDev))
                             {
                                 print_format(format);
                             }
@@ -302,13 +314,21 @@ s32 main(s32 argc, char **argv)
                             
                             fprintf(stdout, "Data chunk (%u)\n", chunk->size);
                             
-                            //s32 samples[8192];
+                            chunk->size -= 120;
+                            api.file.write_to_file(&newFile, sizeof(RiffChunk), chunk);
+                            api.file.write_to_file(&newFile, (chunk->size + 1) & ~1, (u8 *)chunk + sizeof(RiffChunk) + 120);
+                            
                             u8 *ptr = data->data;
+                            api.file.write_to_file(&rawFile, srcPointer - ptr, ptr);
+                            
+#if 1
+                            //s32 samples[8192];
                             u32 frameByteSize = format->blockAlign;
                             umm frameCount = (srcPointer - ptr) / frameByteSize;
                             
                             umm blocks = frameCount / soundDev->sampleCount;
                             u32 remain = frameCount % soundDev->sampleCount;
+                            
                             for (umm blockIdx = 0; blockIdx < blocks; ++blockIdx)
                             {
                                 if (platform_sound_write(soundDev, ptr))
@@ -331,7 +351,6 @@ s32 main(s32 argc, char **argv)
                                 fprintf(stderr, "Missed ending!\n");
                             }
                             
-#if 0                            
                             while (ptr < (srcPointer - 1))
                             {
                                 u8 *samples = ptr;
@@ -374,12 +393,53 @@ s32 main(s32 argc, char **argv)
                             
                         } break;
                         
-                        INVALID_DEFAULT_CASE;
+                        case MAKE_MAGIC('i', 'd', '3', ' '):
+                        {
+                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
+                            
+                            srcPointer += chunk->size;
+                        } break;
+                        
+                        case MAKE_MAGIC('L', 'I', 'S', 'T'):
+                        {
+                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
+                            
+                            srcPointer += chunk->size;
+                        } break;
+                        
+                        case MAKE_MAGIC('C', 'O', 'M', 'M'):
+                        {
+                            srcPointer += chunk->size;
+                        } break;
+                        
+                        case MAKE_MAGIC('S', 'S', 'N', 'D'):
+                        {
+                            srcPointer += chunk->size;
+                        } break;
+                        
+                        default: {
+                            fprintf(stderr, "Unrecognized block: 0x%08X (%c%c%c%c)\n", chunk->magic,
+                                    chunk->magic & 0xFF, (chunk->magic >> 8) & 0xFF, (chunk->magic >> 16) & 0xFF,
+                                    (chunk->magic >> 24) & 0xFF);
+                            srcPointer += chunk->size;
+                        } break;
+                        //INVALID_DEFAULT_CASE;
                     }
                 }
             }
+            else
+            {
+                fprintf(stderr, "Not a WAVE block: 0x%08X\n", chunk->magic);
+            }
+        }
+        else
+        {
+            fprintf(stderr, "Not a RIFF block: 0x%08X\n", chunk->magic);
         }
     }
+    
+    api.file.close_file(&newFile);
+    api.file.close_file(&rawFile);
     
     return 0;
 }

@@ -1,5 +1,13 @@
 #include "../libberdip/platform.h"
+#include "../libberdip/std_memory.h"
 
+global MemoryAllocator gMemoryAllocator_;
+global MemoryAllocator *gMemoryAllocator = &gMemoryAllocator_;
+
+global FileAPI gFileApi_;
+global FileAPI *gFileApi = &gFileApi_;
+
+#include "../libberdip/std_memory.cpp"
 #include "../libberdip/std_file.c"
 
 #include "./mp3.h"
@@ -109,12 +117,15 @@ print_ape(Buffer tag)
 
 int main(int argc, char **argv)
 {
+    std_file_api(gFileApi);
+    initialize_std_allocator(0, gMemoryAllocator);
+    
     if (argc > 1)
     {
         String inputFile = string(argv[1]);
         fprintf(stdout, "Opening: %.*s.\n", STR_FMT(inputFile));
         
-        Buffer inputData = read_entire_file(inputFile);
+        Buffer inputData = gFileApi->read_entire_file(gMemoryAllocator, inputFile);
         if (inputData.size)
         {
             u8 *src = inputData.data;

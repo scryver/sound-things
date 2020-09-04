@@ -22,7 +22,7 @@ struct SoundDevice
 #define PLATFORM_SOUND_ERROR_STRING(name) String name(SoundDevice *device)
 typedef PLATFORM_SOUND_ERROR_STRING(PlatformSoundErrorString);
 
-#define PLATFORM_SOUND_INIT(name) b32 name(SoundDevice *device)
+#define PLATFORM_SOUND_INIT(name) b32 name(MemoryAllocator *allocator, SoundDevice *device)
 typedef PLATFORM_SOUND_INIT(PlatformSoundInit);
 
 #define PLATFORM_SOUND_REFORMAT(name) b32 name(SoundDevice *device)
