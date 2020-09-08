@@ -45,7 +45,7 @@ alsa_hardware_init(AlsaDevice *device, u32 sampleFrequency, u32 sampleCount, u32
                         error = snd_pcm_hw_params_set_rate(device->pcmHandle, device->hwParams, sampleFrequency, 0);
                         if (error >= 0)
                         {
-                            u32 totalPeriodCount = 2;
+                            u32 totalPeriodCount = SOUND_PERIOND_COUNT;
                             u32 totalBufferSize = sampleCount * totalPeriodCount;
                             
                             error = snd_pcm_hw_params_set_buffer_size(device->pcmHandle, device->hwParams, totalBufferSize);
@@ -235,7 +235,7 @@ internal PLATFORM_SOUND_INIT(linux_sound_init)
     s32 error = snd_output_stdio_attach(&alsaDev->stdout, stdout, 0);
     if (error >= 0)
     {
-        alsaDev->name = "hw:1,0";
+        alsaDev->name = SOUND_HW_NAME;
         error = snd_pcm_hw_params_malloc(&alsaDev->hwParams);
         
         if (error >= 0)

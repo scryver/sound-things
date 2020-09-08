@@ -17,6 +17,8 @@ global u32 gPrintFlags = U32_MAX;
 internal __int128_t
 generate_s128_tpdf(RandomSeriesPCG *series)
 {
+    // TODO(michiel): Maybe use simd random numbers?
+    
     // NOTE(michiel): Make sure upper 24 bits are zero
     // last shift adds some extra randomness to the lower 23:8 bits
     __int128_t a = (u64)random_next_u32(series);
@@ -88,7 +90,8 @@ s128_from_f32_truncated(f32 value)
         else
         {
             //i_expect(exponent <= 0);
-            s32 shifts = (128 - DITHER_TOTAL_BITS) + exponent;
+            // NOTE(michiel): Minus mantissa+headroom = 24 + 2
+            s32 shifts = (128 - (24 + DITHER_HEADROOM_BITS)) + exponent;
             
             if (gPrintFlags & 0x4)
             {

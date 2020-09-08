@@ -8,6 +8,12 @@
 
 #include "./platform_sound.h"
 
+// TODO(michiel): Blah, fugly
+#define SOUND_PERIOND_COUNT    4
+//#define SOUND_PERIOND_COUNT    2 // Mu
+#define SOUND_HW_NAME          "default"
+//#define SOUND_HW_NAME          "hw:1,0 // Mu"
+
 #include "./linux_sound.h"
 #include "./linux_sound.cpp"
 

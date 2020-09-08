@@ -7,6 +7,12 @@
 
 #include "./platform_sound.h"
 
+// TODO(michiel): Blah, fugly
+#define SOUND_PERIOND_COUNT    4
+//#define SOUND_PERIOND_COUNT    2 // Mu
+#define SOUND_HW_NAME          "default"
+//#define SOUND_HW_NAME          "hw:1,0 // Mu"
+
 #include "./linux_sound.h"
 #include "./linux_sound.cpp"
 
@@ -317,8 +323,10 @@ int main(int argc, char **argv)
     std_file_api(gFileApi);
     initialize_std_allocator(0, gMemoryAllocator);
     
-    Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/03 On the Run.flac"));
+    Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/PinkFloyd-EmptySpaces.flac"));
+    //Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/03 On the Run.flac"));
     //Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
+    i_expect(flacData.size);
     
     BitStreamer bitStream_ = create_bitstreamer(flacData, BitStream_BigEndian);
     BitStreamer *bitStream = &bitStream_;
@@ -569,7 +577,7 @@ int main(int argc, char **argv)
     soundDev->channelCount = info->channelCount;
     soundDev->format = SoundFormat_s32;
     
-    RandomSeriesPCG random = random_seed_pcg(102947602914ULL, 108926451051924ULL); // TODO(michiel): TEMP
+    RandomSeriesPCG random = random_seed_pcg(0x102947602914ULL, 0x108926451051924ULL); // TODO(michiel): TEMP
     unused(random);
     
     if (platform_sound_init(gMemoryAllocator, soundDev))
@@ -689,7 +697,7 @@ int main(int argc, char **argv)
             //f32_the_floats(frameHeader.blockSize, testSamples2, testSamplesF); // TODO(michiel): TEMP
             u32 totalCount = frameHeader.blockSize * soundDev->channelCount;
             s32 *source = testSamples2;
-            u32 frameSize = soundDev->channelCount * soundDev->sampleCount;
+            u32 frameSize = soundDev->sampleCount * soundDev->channelCount;
             while (totalCount >= frameSize)
             {
                 if (platform_sound_write(soundDev, source))
