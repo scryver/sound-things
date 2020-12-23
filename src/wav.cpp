@@ -50,6 +50,7 @@ wav_open_stream(String filename)
                                             result.settings.format = (WavFormatType)format.formatCode;
                                             if ((format.chunkSize > 16) && format.extensionCount)
                                             {
+                                                i_expect(format.channelCount == ((format.blockAlign * 8) / format.sampleSize));
                                                 result.settings.format = (WavFormatType)*(u16 *)format.subFormat;
                                             }
                                         }
@@ -199,6 +200,7 @@ wav_load_file(MemoryAllocator *allocator, String filename)
                             (format->chunkSize > 16) &&
                             format->extensionCount)
                         {
+                            i_expect(format->channelCount == ((format->blockAlign * 8) / format->sampleSize));
                             result.settings.format = (WavFormatType)*(u16 *)format->subFormat;
                         }
                     } break;
@@ -241,6 +243,42 @@ wav_read_chunk(WavReader *reader, u32 byteCount)
     }
     
     return result;
+}
+
+internal b32
+wav_write_file(String filename, WavSettings *settings, Buffer wavData)
+{
+    umm totalSize = (sizeof(RiffHeader) +
+                     offset_of(WavFormat, extensionCount) +
+                     sizeof(RiffChunk) +
+                     wavData.size);
+    
+    RiffHeader header;
+    header.magic = MAKE_MAGIC('R', 'I', 'F', 'F');
+    header.size = totalSize;
+    header.fileType = MAKE_MAGIC('W', 'A', 'V', 'E');
+    
+    WavFormat format;
+    format.magic = MAKE_MAGIC('f', 'm', 't', ' ');
+    format.chunkSize = offset_of(WavFormat, extensionCount) - sizeof(RiffChunk); //offset_of(WavFormat, extensionCount);
+    format.formatCode = settings->format;
+    format.channelCount = safe_truncate_to_u16(settings->channelCount);
+    format.sampleRate = settings->sampleFrequency;
+    format.dataRate = settings->sampleFrequency * settings->sampleFrameSize; // TODO(michiel): Needed?
+    format.blockAlign = safe_truncate_to_u16(settings->sampleFrameSize);
+    format.sampleSize = safe_truncate_to_u16(settings->sampleResolution);
+    
+    RiffChunk dataChunk;
+    dataChunk.magic = MAKE_MAGIC('d', 'a', 't', 'a');
+    dataChunk.size = wavData.size;
+    ApiFile writeFile = api.file.open_file(filename, FileOpen_Write);
+    api.file.write_to_file(&writeFile, sizeof(RiffHeader), &header);
+    api.file.write_to_file(&writeFile, offset_of(WavFormat, extensionCount), &format);
+    api.file.write_to_file(&writeFile, sizeof(RiffChunk), &dataChunk);
+    api.file.write_to_file(&writeFile, wavData.size, wavData.data);
+    api.file.close_file(&writeFile);
+    
+    return no_file_errors(&writeFile);
 }
 
 internal void

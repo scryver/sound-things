@@ -8,6 +8,7 @@
 
 #include "./platform_sound.h"
 
+#define PLAY_SOUND             0
 // TODO(michiel): Blah, fugly
 #define SOUND_PERIOND_COUNT    4
 //#define SOUND_PERIOND_COUNT    2 // Mu
@@ -220,11 +221,18 @@ s32 main(s32 argc, char **argv)
     Buffer wavFile = api.file.read_entire_file(&platformAlloc, filename);
     //Buffer wavFile = read_entire_file(static_string("data/11 Info Dump.wav"));
     
+#if PLAY_SOUND
     SoundDevice soundDev_ = {};
     SoundDevice *soundDev = &soundDev_;
+#endif
     
+#if 0    
     ApiFile newFile = api.file.open_file(static_string("wavnew.wav"), FileOpen_Write);
+#endif
     ApiFile rawFile = api.file.open_file(static_string("wav.raw"), FileOpen_Write);
+    
+    WavSettings newSettings = {};
+    Buffer newFile = {};
     
     if (wavFile.size)
     {
@@ -234,7 +242,7 @@ s32 main(s32 argc, char **argv)
         
         RiffChunk newChunk = *chunk;
         newChunk.size -= 30 * 4;
-        api.file.write_to_file(&newFile, sizeof(RiffChunk), &newChunk);
+        //api.file.write_to_file(&newFile, sizeof(RiffChunk), &newChunk);
         
         if ((chunk->magic == MAKE_MAGIC('R', 'I', 'F', 'F')) ||
             (chunk->magic == MAKE_MAGIC('F', 'O', 'R', 'M')))
@@ -245,7 +253,7 @@ s32 main(s32 argc, char **argv)
             if ((chunk->magic == MAKE_MAGIC('W', 'A', 'V', 'E')) ||
                 (chunk->magic == MAKE_MAGIC('A', 'I', 'F', 'F')))
             {
-                api.file.write_to_file(&newFile, 4, chunk);
+                //api.file.write_to_file(&newFile, 4, chunk);
                 srcPointer += 4;
                 fprintf(stdout, "Got one (%u)\n", totalByteCount);
                 WavFormat *format = 0;
@@ -262,8 +270,23 @@ s32 main(s32 argc, char **argv)
                             format = (WavFormat *)chunk;
                             srcPointer += format->chunkSize;
                             
-                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + format->chunkSize, chunk);
+                            //api.file.write_to_file(&newFile, sizeof(RiffChunk) + format->chunkSize, chunk);
                             
+                            newSettings.channelCount = format->channelCount;
+                            newSettings.sampleFrequency = format->sampleRate;
+                            newSettings.sampleResolution = format->sampleSize;
+                            newSettings.sampleFrameSize = format->blockAlign;
+                            newSettings.format = (WavFormatType)format->formatCode;
+                            
+                            if (format->extensionCount) {
+                                if ((format->formatCode == WavFormat_Extensible) &&
+                                    (format->chunkSize > 16))
+                                {
+                                    newSettings.format = (WavFormatType)*(u16 *)format->subFormat;
+                                }
+                            }
+                            
+#if PLAY_SOUND
                             soundDev->sampleFrequency = format->sampleRate;
                             soundDev->sampleCount = 4096;
                             soundDev->channelCount = format->channelCount;
@@ -300,6 +323,7 @@ s32 main(s32 argc, char **argv)
                             {
                                 srcPointer = (u8 *)U64_MAX;
                             }
+#endif
                         } break;
                         
                         case MAKE_MAGIC('f', 'a', 'c', 't'):
@@ -316,18 +340,23 @@ s32 main(s32 argc, char **argv)
                             srcPointer += (chunk->size + 1) & ~1;
                             
                             i_expect((format->sampleSize % 8) == 0);
+#if PLAY_SOUND
                             i_expect(soundDev->sampleFrequency);
+#endif
                             
                             fprintf(stdout, "Data chunk (%u)\n", chunk->size);
                             
-                            chunk->size -= 120;
-                            api.file.write_to_file(&newFile, sizeof(RiffChunk), chunk);
-                            api.file.write_to_file(&newFile, (chunk->size + 1) & ~1, (u8 *)chunk + sizeof(RiffChunk) + 120);
+                            newFile.size = data->chunkSize - 120;
+                            newFile.data = data->data + 120;
+                            
+                            //chunk->size -= 120;
+                            //api.file.write_to_file(&newFile, sizeof(RiffChunk), chunk);
+                            //api.file.write_to_file(&newFile, (chunk->size + 1) & ~1, (u8 *)chunk + sizeof(RiffChunk) + 120);
                             
                             u8 *ptr = data->data;
                             api.file.write_to_file(&rawFile, srcPointer - ptr, ptr);
                             
-#if 1
+#if PLAY_SOUND
                             //s32 samples[8192];
                             u32 frameByteSize = format->blockAlign;
                             umm frameCount = (srcPointer - ptr) / frameByteSize;
@@ -401,14 +430,14 @@ s32 main(s32 argc, char **argv)
                         
                         case MAKE_MAGIC('i', 'd', '3', ' '):
                         {
-                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
+                            //api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
                             
                             srcPointer += chunk->size;
                         } break;
                         
                         case MAKE_MAGIC('L', 'I', 'S', 'T'):
                         {
-                            api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
+                            //api.file.write_to_file(&newFile, sizeof(RiffChunk) + chunk->size, chunk);
                             
                             srcPointer += chunk->size;
                         } break;
@@ -444,8 +473,10 @@ s32 main(s32 argc, char **argv)
         }
     }
     
-    api.file.close_file(&newFile);
+    //api.file.close_file(&newFile);
     api.file.close_file(&rawFile);
+    
+    wav_write_file(static_string("wavnew.wav"), &newSettings, newFile);
     
     return 0;
 }

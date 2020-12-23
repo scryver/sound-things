@@ -20,5 +20,6 @@ pushd "$buildDir" > /dev/null
     clang++ $flags $exceptions "$codeDir/wav_decode.cpp" -o wavdecode -lasound
     clang++ $flags $exceptions "$codeDir/sound.cpp" -o make-sound -lasound
     clang++ $flags $exceptions "$codeDir/wav_float2int.cpp" -o wav-convert
+    clang++ $flags $exceptions "$codeDir/wav_generator.cpp" -o wav-generate
 popd > /dev/null
 

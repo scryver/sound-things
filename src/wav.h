@@ -94,7 +94,9 @@ internal WavStreamer wav_open_stream(String filename);
 // Returns `true` on successful read.
 internal b32 wav_read_stream(WavStreamer *streamer, Buffer *output);
 
-// TODO(michiel): Memory allocator
-internal WavReader wav_load_file(String filename);
+internal WavReader wav_load_file(MemoryAllocator *allocator, String filename);
 internal Buffer wav_read_chunk(WavReader *reader, u32 byteCount);
+
+internal b32 wav_write_file(String filename, WavSettings *settings, Buffer wavData);
+
 
