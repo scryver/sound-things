@@ -1,3 +1,5 @@
+// NOTE(michiel): See: http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html
+
 internal WavStreamer
 wav_open_stream(String filename)
 {
@@ -248,6 +250,14 @@ wav_read_chunk(WavReader *reader, u32 byteCount)
 internal b32
 wav_write_file(String filename, WavSettings *settings, Buffer wavData)
 {
+    /* TODO(michiel): The WAVE_FORMAT_EXTENSIBLE format should be used whenever:
+    
+    PCM data has more than 16 bits/sample.
+        The number of channels is more than 2.
+        The actual number of bits/sample is not equal to the container size.
+        The mapping from channels to speakers needs to be specified.
+*/
+    
     umm totalSize = (sizeof(RiffHeader) +
                      offset_of(WavFormat, extensionCount) +
                      sizeof(RiffChunk) +

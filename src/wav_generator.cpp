@@ -1,4 +1,5 @@
 #include "../libberdip/platform.h"
+#include "../libberdip/random.h"
 #include "../libberdip/linux_memory.h"
 
 #include <unistd.h>
@@ -16,6 +17,7 @@ global MemoryAPI *gMemoryApi = &api.memory;
 #include "../libberdip/linux_file.c"
 
 #include "wav.cpp"
+#include "truncation.cpp"
 
 s32 main(s32 argc, char **argv)
 {
@@ -117,8 +119,8 @@ s32 main(s32 argc, char **argv)
         for (u32 channel = 0; channel < settings.channelCount; ++channel)
         {
             // NOTE(michiel): 16bit
-            s16 value = (s16)round64((f64)S16_MAX * sample);
-            *(u16 *)fillAt.data = value;
+            s32 value = (s32)round64((f64)S16_MAX * sample);
+            *(u16 *)fillAt.data = safe_truncate_to_s16(value);
             advance(&fillAt, 2);
         }
         at += atStep;
