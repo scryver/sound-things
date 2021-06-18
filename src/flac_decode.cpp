@@ -323,7 +323,12 @@ int main(int argc, char **argv)
     std_file_api(gFileApi);
     initialize_std_allocator(0, gMemoryAllocator);
     
-    Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/PinkFloyd-EmptySpaces.flac"));
+    Buffer flacData = {};
+    if (argc == 2) {
+        flacData = gFileApi->read_entire_file(gMemoryAllocator, string(argv[1]));
+    } else {
+        flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/PinkFloyd-EmptySpaces.flac"));
+    }
     //Buffer flacData = gFileApi->read_entire_file(gMemoryAllocator, static_string("data/03 On the Run.flac"));
     //Buffer flacData = read_entire_file(static_string("data/11 Info Dump.flac"));
     i_expect(flacData.size);
